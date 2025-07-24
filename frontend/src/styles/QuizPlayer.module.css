@@ -1,11 +1,12 @@
 .quizContainer {
   position: relative;
-  max-width: 600px;
+  width: 100%;
+  max-width: 720px;       /* matches chat container */
   margin: 1rem auto;
-  background: #ffffff;
-  border-radius: 12px;
   padding: 1.5rem;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+  background: #fafafa;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   font-family: 'Inter', sans-serif;
 }
 
@@ -92,11 +93,13 @@
 
 @media (max-width: 600px) {
   .quizContainer {
+    width: 100%;
     margin: 0.5rem;
     padding: 0.75rem;
   }
   .closeBtn {
-    top: 8px; right: 8px;
+    top: 8px; 
+    right: 8px;
     font-size: 1.2rem;
   }
   .questionCount {

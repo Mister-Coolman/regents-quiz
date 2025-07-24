@@ -54,7 +54,7 @@ export default function Chat() {
 
   return (
     <div className={styles.container}>
-      <div className={styles.header}>Algebra I Regents AI Tutor</div>
+      <div className={styles.header}>Algebra I Regents Practice AI Chatbot</div>
 
       <div className={styles.chatWindow}>
         {messages.map((msg, idx) => (

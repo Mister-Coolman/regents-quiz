@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
+import styles from '../styles/QuizPlayer.module.css';
 
 export default function QuizPlayer({ questions = [], onFinish }) {
+  // 1) Guard against empty questions
   if (!Array.isArray(questions) || questions.length === 0) {
     return (
       <div style={{ padding: '1rem', textAlign: 'center' }}>
@@ -19,6 +21,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   const current = questions[idx];
   const { subject = '', month = '', year = '' } = current;
 
+  // Check user's answer
   const handleCheck = () => {
     const correct = String(selected) === String(current.correct_answer);
     setIsCorrect(correct);
@@ -27,6 +30,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
     setShowAnswer(true);
   };
 
+  // Next question or finish
   const handleNext = () => {
     setShowAnswer(false);
     setSel(null);
@@ -39,44 +43,18 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   };
 
   return (
-    <div style={{
-      position: 'relative',
-      padding: 16,
-      background: '#fafafa',
-      borderRadius: 8,
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      maxWidth: 600,
-      margin: '0 auto'
-    }}>
+    <div className={styles.quizContainer}>
       {/* ✖️ Close button */}
-      <button
-        onClick={onFinish}
-        aria-label="Close quiz"
-        style={{
-          position: 'absolute',
-          top: 8,
-          right: 8,
-          border: 'none',
-          background: 'transparent',
-          fontSize: '1.5rem',
-          lineHeight: 1,
-          cursor: 'pointer',
-        }}
-      >
+      <button onClick={onFinish} className={styles.closeBtn} aria-label="Close quiz">
         &times;
       </button>
 
       {/* Combined header row */}
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'baseline',
-        marginBottom: 12
-      }}>
-        <h2 style={{ margin: 0 }}>
+      <div className={styles.headerRow}>
+        <h2 className={styles.questionCount}>
           Question {idx + 1} of {questions.length}
         </h2>
-        <div style={{ fontSize: '0.9rem', color: '#555' }}>
+        <div className={styles.metadata}>
           {subject} – {month} {year}
         </div>
       </div>
@@ -84,7 +62,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
       {/* Question image */}
       {current.question_image_path && (
         <img
-          src={`${current.question_image_path}`}
+          src={current.question_image_path}
           alt="Question diagram"
           style={{
             width: '100%',
@@ -96,27 +74,20 @@ export default function QuizPlayer({ questions = [], onFinish }) {
       )}
 
       {/* Question text */}
-      <p style={{ marginBottom: 16 }}>{current.question_text}</p>
+      <p className={styles.questionText}>{current.question_text}</p>
 
       {!showAnswer ? (
         <>
           {/* MCQ options 1–4 */}
           {current.type === 'MCQ' && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div className={styles.options}>
               {[1, 2, 3, 4].map(num => (
                 <button
                   key={num}
                   onClick={() => setSel(num)}
-                  style={{
-                    flex: 1,
-                    margin: '0 4px',
-                    padding: '0.75rem',
-                    fontSize: '1.2rem',
-                    borderRadius: '6px',
-                    border: selected === num ? '2px solid #007bff' : '1px solid #ccc',
-                    background: selected === num ? '#e7f1ff' : 'white',
-                    cursor: 'pointer'
-                  }}
+                  className={`${styles.optionBtn} ${
+                    selected === num ? styles.selected : ''
+                  }`}
                 >
                   {num}
                 </button>
@@ -144,14 +115,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
           <button
             onClick={handleCheck}
             disabled={selected === null || selected === ''}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: '#28a745',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer'
-            }}
+            className={styles.checkBtn}
           >
             Check Answer
           </button>
@@ -159,24 +123,16 @@ export default function QuizPlayer({ questions = [], onFinish }) {
       ) : (
         <div style={{ textAlign: 'center' }}>
           <p style={{ fontSize: '1.1rem', margin: '1rem 0' }}>
-            {isCorrect
-              ? <span style={{ color: '#28a745' }}>✅ Correct!</span>
-              : <span style={{ color: '#dc3545' }}>
-                  ❌ Incorrect. The correct answer was <strong>{current.correct_answer}</strong>.
-                </span>
-            }
+            {isCorrect ? (
+              <span style={{ color: '#10b981' }}>✅ Correct!</span>
+            ) : (
+              <span style={{ color: '#ef4444' }}>
+                ❌ Incorrect. The correct answer was{' '}
+                <strong>{current.correct_answer}</strong>.
+              </span>
+            )}
           </p>
-          <button
-            onClick={handleNext}
-            style={{
-              padding: '0.75rem 1.5rem',
-              background: '#007bff',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              cursor: 'pointer'
-            }}
-          >
+          <button onClick={handleNext} className={styles.nextBtn}>
             {idx + 1 < questions.length ? 'Next Question' : 'Finish Quiz'}
           </button>
         </div>
