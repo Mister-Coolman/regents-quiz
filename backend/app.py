@@ -8,12 +8,13 @@ from fpdf import FPDF
 import os
 import subprocess
 from werkzeug.middleware.proxy_fix import ProxyFix
+import re
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
 CORS(app, origins=["http://localhost:5173", "https://*.ngrok-free.app"])
-CORS(app, origins=["https://aac950645d56.ngrok-free.app"])
-CORS(app, resources={r"/*": {"origins": "https://aac950645d56.ngrok-free.app"}})
+CORS(app, origins=["https://perfectly-knowing-cow.ngrok-free.app"])
+CORS(app, resources={r"/*": {"origins": "https://perfectly-knowing-cow.ngrok-free.app"}})
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 DB_PATH = "/Users/arjunrangarajan/regents-quiz/regents-quiz/backend/regentsqs.db"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # /regents-quiz/backend
@@ -45,52 +46,51 @@ def init_db():
 def parse_query_with_ollama(query_text):
     print(f"[DEBUG] Parsing query with Ollama: {query_text}")
     prompt = f"""
-    You are a parsing assistant for a Regents question generator. Given a student's request, extract the following information and return a single-line JSON object with these fields:
+        You are a precise JSON‑only parser for Regents practice questions. Given a student’s raw request, extract exactly these fields and nothing else in a single‑line JSON object:
 
-    - "subject" (e.g., "Algebra I", "Geometry", "ELA")
-    - "topic" (e.g., "linear equations", "exponents", etc.)
-    - "type" (must be one of: "MCQ", "CRQ", or "Essay")
-    - "limit" (integer number of questions to return)
+        • intent: one of "generate", "list_topics", or "count_questions"  
+            - "generate": return actual practice questions  
+            - "list_topics": list all available topics (optionally filtered by subject)  
+            - "count_questions": return the count of questions matching the filters  
 
-    ### 🧠 Definitions:
-    - MCQ = Multiple Choice Question
-    - CRQ = Constructed Response Question
-    - SAQ = Short Answer Question (Treat this as CRQ)
+        • subject: string, e.g. "Algebra I", "Geometry", or "ELA" (empty if unspecified)  
+        • topic: string, exactly one of the valid topics (empty if no match)  
+        • type: one of "MCQ", "CRQ", or "Essay" (treat "SAQ" or "Short Answer" as "CRQ"; empty if unspecified)  
+        • limit: integer number of questions (default to 5 for "generate"; must be 0 for other intents)  
 
-    ### 📌 Parsing Rules:
-    - If they say **SAQ**, return "CRQ" for "type"
-    - If they just say **questions** without a type, leave "type" as an empty string
-    - If **type** is not mentioned or not clearly one of ["MCQ", "CRQ", "Essay"], leave it empty
-    - If **topic** is not mentioned or unclear, leave it empty
-    - If **number of questions** is missing or vague (e.g., “some”, “a few”), set "limit" to 5
-    - Accept spelled-out numbers (e.g., "ten" → 10)
+        ### Default rules & error‐proofing
+        - If the user’s text clearly asks to “list topics” or “what topics”, set intent="list_topics"; subject may still be filled.  
+        - If the user’s text asks “how many” or “count”, set intent="count_questions"; ignore limit.  
+        - Otherwise default intent="generate".  
+        - If the user specifies a non‑numeric count (“some”, “a few”), default limit to 5.  
+        - Accept spelled‑out numbers up to “twenty” (e.g. “ten” → 10); otherwise default limit=5.  
+        - Always output valid JSON; do not include any extra text, explanations, or markdown.
 
-    ### ℹ️ For Algebra I, only allow topics from this list:
-    - The Real Number System
-    - Quantities
-    - Seeing Structure in Expressions
-    - Arithmetic with Polynomials and Rational Expressions
-    - Creating Equations
-    - Reasoning with Equations and Inequalities
-    - Interpreting Functions
-    - Building Functions
-    - Linear, Quadratic, and Exponential Models
-    - Interpreting categorical and quantitative data
+        ### Algebra I topic white‑list (choose exactly one if intent is "generate")
+        1. The Real Number System  
+        2. Quantities  
+        3. Seeing Structure in Expressions  
+        4. Arithmetic with Polynomials and Rational Expressions  
+        5. Creating Equations  
+        6. Reasoning with Equations and Inequalities  
+        7. Solving One Variable Equations  
+        8. Systems of Equations  
+        9. Interpreting Functions  
+        10. Building Functions  
+        11. Linear, Quadratic, and Exponential Models  
+        12. Interpreting categorical and quantitative data
 
-    If the topic for Algebra I does not match one of these, leave it empty.
-    If no topic is given, like "5 Algebra I mcqs" or "5 Algebra I questions" then do not have anythign for topic.
+        ### JSON schema (exactly these keys; no extras)
+        {{  
+        "intent":    "<generate|list_topics|count_questions>",  
+        "subject":   "<subject or empty string>",  
+        "topic":     "<one of the above topics or empty string>",  
+        "type":      "<MCQ|CRQ|Essay or empty string>",  
+        "limit":     <integer: number of questions or 0>  
+        }}
 
-    ### 🔄 Input:
-    Student Query: "{query_text}"
-
-    ### ✅ Output Format:
-    Respond with a single-line **valid JSON** object like this:
-    {{"subject": "Algebra I", "topic": "Interpreting Functions", "type": "MCQ", "limit": 5}}
-
-    ⚠️ Do not include any explanations, markdown, or extra text. Only output the raw JSON.
+        Student Query: "{query_text}"
     """
-
-
 
     try:
         result = subprocess.run(
@@ -100,25 +100,47 @@ def parse_query_with_ollama(query_text):
             capture_output=True,
             timeout=15
         )
-        response = result.stdout.strip()
-        json_start = response.find('{')
-        json_str = response[json_start:]
-        parsed = json.loads(json_str)
+        raw = result.stdout.strip()
+        print(f"[DEBUG] Ollama raw output:\n{raw}")
+
+        # 1) Find the first "{" and the last "}"
+        start = raw.find('{')
+        end   = raw.rfind('}')
+        if start == -1 or end == -1 or end < start:
+            raise ValueError("Could not locate JSON object in Ollama output")
+
+        json_str = raw[start:end+1]
+        parsed   = json.loads(json_str)
+
         return (
-            parsed.get("subject", ""),
-            parsed.get("topic", ""),
-            parsed.get("type", ""),
-            int(parsed.get("limit", 5))
+            parsed.get("intent",       "generate"),
+            parsed.get("subject",      ""),
+            clean_topic(parsed.get("topic",        "")),
+            parsed.get("type",         ""),
+            int(parsed.get("limit",     5))
         )
+
     except Exception as e:
         print(f"Ollama parsing failed: {e}")
-        return ("", "", "", 5)
+        # Always return exactly five elements:
+        return ("generate", "", "", "", 5)
+
+def clean_topic(raw_topic: str) -> str:
+    """
+    Remove any leading number + punctuation (e.g. "8. ", "3) ", "12: ")
+    and trim whitespace.
+    """
+    # regex:  ^     start of string
+    #         \d+   one or more digits
+    #         [\.\)\:]  a dot, parenthesis or colon
+    #         \s*   any number of spaces
+    return re.sub(r'^\d+[\.\)\:]\s*', '', raw_topic).strip()
 
 def fetch_questions(subject, topic, qtype, limit):
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
-
+    print(f"Topic: {topic}")
     query = "SELECT * FROM questions WHERE 1=1"
     params = []
     if subject:
@@ -137,6 +159,33 @@ def fetch_questions(subject, topic, qtype, limit):
     rows = cur.fetchall()
     conn.close()
     return [dict(row) for row in rows]
+
+def list_topics(subject):
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    if subject:
+        cur.execute("SELECT DISTINCT topic FROM questions WHERE subject = ?", (subject,))
+    else:
+        cur.execute("SELECT DISTINCT topic FROM questions")
+    topics = [row[0] for row in cur.fetchall() if row[0]]
+    conn.close()
+    return topics
+
+def count_questions(subject, topic, qtype):
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    query = "SELECT COUNT(*) FROM questions WHERE 1=1"
+    params = []
+    if subject:
+        query += " AND subject = ?"; params.append(subject)
+    if topic:
+        query += " AND topic = ?"; params.append(topic)
+    if qtype:
+        query += " AND type = ?";  params.append(qtype)
+    cur.execute(query, params)
+    (count,) = cur.fetchone()
+    conn.close()
+    return count
 
 def generate_pdf(questions, filename):
     pdf = FPDF()
@@ -185,30 +234,35 @@ def generate_pdf(questions, filename):
     return path
 
 def help_response():
-    help_text = """
-    🤖 <b>How to Ask a Good Regents Question</b><br><br>
+    help_text ="""
+    🤖 <b>How to Use the Regents Chatbot</b><br><br>
+    You can ask me to do three things:
+    <ul style="margin-top:0.5rem">
+      <li><b>List Topics</b> – e.g. “What topics are there?” or “List Algebra I topics”</li>
+      <li><b>Count Questions</b> – e.g. “How many MCQs on systems of equations?” or “Count Algebra I CRQs on real numbers</li>
+      <li><b>Generate Practice Questions</b> – e.g. “Give me 5 Algebra I MCQs on interpreting functions</li>
+    </ul>
+    <br>
+    After you generate questions, you’ll see:
+    <ul>
+      <li>📄 A PDF link to download your questions</li>
+      <li>▶️ A “Take Interactive Quiz” button so you can answer them right here!</li>
+    </ul>
+    <br>
 
-    You can request specific types of questions by including:<br>
-    • <b>Subject</b> (e.g., Algebra I, Geometry, ELA)<br>
-    • <b>Topic</b> (e.g., linear equations, exponents)<br>
-    • <b>Type</b> (MCQ = Multiple Choice, CRQ = Constructed Response, Essay)<br>
-    • <b>Number of Questions</b> (e.g., 5, 10)<br><br>
-
-    <b>✅ Examples:</b><br>
-    - "Give me 5 Algebra I multiple choice questions on linear equations"<br>
-    - "I want 3 Geometry CRQs about volume"<br>
-    - "ELA essay questions about character development"<br><br>
-
-    If you're not sure what to ask, just say "help" or "show me examples." <br><br>
-
-    <hr>
-    <b>📘 Type Definitions:</b><br>
-    • <b>MCQ</b> = Multiple Choice Question<br>
-    • <b>CRQ</b> = Constructed Response Question<br>
-    • <b>SAQ</b> = Short Answer Question (interpreted as CRQ)<br><br>
+    <b>✅ More Examples:</b><br>
+    – “List topics for Algebra I”<br>
+    – “Count CRQs on systems of equations in Algebra I”<br><br>
 
     <hr>
-    <b>ℹ️ For Algebra I, valid topics include:</b><br>
+    <b>📘 Type Definitions:</b>
+    <ul>
+      <li><b>MCQ</b> = Multiple Choice Question</li>
+      <li><b>CRQ</b> = Constructed Response Question</li>
+      <li><b>Essay</b> = Long‑form written response</li>
+    </ul>
+    <hr>
+    <b>ℹ️ Valid Algebra I topics:</b>
     <ul>
       <li>The Real Number System</li>
       <li>Quantities</li>
@@ -216,6 +270,8 @@ def help_response():
       <li>Arithmetic with Polynomials and Rational Expressions</li>
       <li>Creating Equations</li>
       <li>Reasoning with Equations and Inequalities</li>
+      <li>Solving One Variable Equations</li>
+      <li>Systems of Equations</li>
       <li>Interpreting Functions</li>
       <li>Building Functions</li>
       <li>Linear, Quadratic, and Exponential Models</li>
@@ -233,14 +289,39 @@ def query():
     print(f"[INFO] Received query: {user_query}")
 
     # Help trigger
-    if not user_query or user_query.lower() in {"help", "?", "how do i ask", "show me examples"}:
+    if not user_query or user_query.lower() in {"help", "how do i ask", "show me examples"}:
         print("[INFO] Help response triggered")
         return help_response()
 
-    subject, topic, qtype, limit = parse_query_with_ollama(user_query)
-    print(f"[DEBUG] Parsed query -> Subject: {subject}, Topic: {topic}, Type: {qtype}, Limit: {limit}")
+    intent, subject, topic, qtype, limit = parse_query_with_ollama(user_query)
+    print(f"[DEBUG] Parsed query -> Subject: {subject}, Topic: {clean_topic(topic)}, Type: {qtype}, Limit: {limit}")
 
     # If nothing was parsed, fallback to help
+
+    if intent == "list_topics":
+        if not subject:
+            return jsonify({"response": "No topics found for that subject.<br>Try something like 'List topics for Algebra I'"})
+        topics = list_topics(subject)
+        if topics:
+            # Build an HTML bullet list
+            title = f"Available topics for <b>{subject}</b>:" if subject else "Available topics:"
+            items = "".join(f"<li>{t}</li>" for t in topics)
+            html = f"{title}<ul style='margin-top:0.5rem'>{items}</ul>"
+            return jsonify({"response": html})
+        else:
+            return jsonify({"response": "No topics found for that subject."})
+
+    
+    if intent == "count_questions":
+        cnt = count_questions(subject, topic, qtype)
+        parts = []
+        if subject: parts.append(subject)
+        if topic:   parts.append(topic)
+        if qtype:   parts.append(qtype)
+        label = " ".join(parts) or "all questions"
+        resp = f"There are {cnt} {label} in the database."
+        return jsonify({"response": resp})
+    
     if not any([subject, topic, qtype]):
         print("[WARN] Query parsing returned empty fields")
         return help_response()
