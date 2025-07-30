@@ -9,8 +9,10 @@ from datetime import datetime
 import uuid
 import sqlite3
 from bs4 import BeautifulSoup
+import pandas as pd
 
 import fitz
+import pdfplumber
 import re
 
 # import `ollama`
@@ -21,6 +23,31 @@ DB_PATH = "../backend/regentsqs.db"
 MODEL_PATH = "models/best2.pt"
 OUTPUT_DIR = "../backend/images"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+cluster_map = {
+    "N-RN.B": "The Real Number System",
+    "N-Q.A": "Quantities",
+    "N-QA": "Quantities",
+    "A-SSE.A": "Seeing Structure in Expressions",
+    "A-SSE.B": "Seeing Structure in Expressions",
+    "A-APR.A": "Arithmetic with Polynomials and Rational Expressions",
+    "A-APR.B": "Arithmetic with Polynomials and Rational Expressions",
+    "A-CED.A": "Creating Equations",
+    "A-REI.A": "Reasoning with Equations and Inequalities",
+    "A-REI.B": "Solving One Variable Equations",
+    "A-REI.C": "Systems of Equations",
+    "A-REI.D": "Reasoning with Equations and Inequalities",
+    "F-IF.A": "Interpreting Functions",
+    "F-IF.B": "Interpreting Functions",
+    "F-IF.C": "Interpreting Functions",
+    "F-BF.A": "Building Functions",
+    "F-BF.B": "Building Functions",
+    "F-LE.A": "Linear, Quadratic, and Exponential Models",
+    "F-LE.B": "Linear, Quadratic, and Exponential Models",
+    "S-ID.A": "Interpreting Categorical and Quantitative Data",
+    "S-ID.B": "Interpreting Categorical and Quantitative Data",
+    "S-ID.C": "Interpreting Categorical and Quantitative Data"
+}
 
 def classify_topic(text):
     prompt = f"""Classify the following Algebra I question into only one of the following topics: The Real Number System, Quantities, Seeing Structure in Expressions, Arithmetic with Polynomials and Rational
@@ -55,6 +82,24 @@ Respond with only the topic."""
     except Exception as e:
         print(f"Ollama classification failed: {e}")
         return "unknown"
+
+def extract_topic_table(PDF_PATH, pgs=[12, 13]):
+    with pdfplumber.open(PDF_PATH) as f:
+        if (len(f.pages) < 6):
+            return {}
+        starting_pg = -1
+        for idx, pg in enumerate(f.pages):
+            txt = pg.extract_text()
+            if ("Map to the Common Core Learning" in txt or "Map to the Learning Standards" in txt or "Map to the Core Learning Standards" in txt):
+                starting_pg = idx
+        page = f.pages[starting_pg]
+        raw_table = page.extract_table()
+        rows = raw_table[1:]
+        page2 = f.pages[starting_pg + 1]
+        rows.extend(page2.extract_table())
+        df = pd.DataFrame(rows, columns=raw_table[0])
+        df['Topic'] = df['Cluster'].map(cluster_map)
+        return dict(df[['Question', 'Topic']].values)
 
 def grabKeyAnswers(PDF_PATH):
     scoringKeyDict = {}
@@ -165,14 +210,14 @@ def insert_question_into_db(subject, topic, month, year, qtype, question_image_p
     conn.commit()
     conn.close()
 
-def extract_questions_from_pdf(PDF_PATH, KEY_PATH, month, year):
+def extract_questions_from_pdf(PDF_PATH, KEY_PATH, RG_PATH, month, year):
     alldata = []
 
     model = YOLO(MODEL_PATH)
     predictor = RecognitionPredictor()
     detector = DetectionPredictor()
     scoring_key = grabKeyAnswers(KEY_PATH)
-
+    topics = extract_topic_table(RG_PATH)
     pdf = fitz.open(PDF_PATH)
     for page_num in range(len(pdf)):
         if page_num == 0:
@@ -210,7 +255,6 @@ def extract_questions_from_pdf(PDF_PATH, KEY_PATH, month, year):
             # Save each cropped question image
             cropped_path = os.path.join(LABEL_DIR, img_filename)
             cropped.save(cropped_path)
-
             # Run OCR
             try:
                 ocr_results = predictor([cropped], det_predictor=detector)
@@ -218,13 +262,12 @@ def extract_questions_from_pdf(PDF_PATH, KEY_PATH, month, year):
             except:
                 question_text = ""
 
-            topic = classify_topic(question_text)
-
             if len(question_text) == 0 or not question_text.split(' ')[0].isdigit():
                 continue
             if (num := question_text.split(' ')[0]) in alldata:
                 continue
             alldata.append(num)
+            topic = topics[num]
             if label == "mcqQuestionBlock":
                 correct_answer = scoring_key[question_text.split(' ')[0]]
             elif label == "saqQuestionBlock":
@@ -239,7 +282,7 @@ def extract_questions_from_pdf(PDF_PATH, KEY_PATH, month, year):
                 month=months[month],
                 year=year,
                 qtype="MCQ" if label == "mcqQuestionBlock" else "CRQ",
-                question_image_path=cropped_path,
+                question_image_path=cropped_path[11:],
                 correct_answer=correct_answer,
                 explanation=None
             )
@@ -251,12 +294,10 @@ def extract_questions_from_pdf(PDF_PATH, KEY_PATH, month, year):
 
 
 if __name__ == "__main__":
-    months = [1, 6, 8]
-    years = range(2024, 2025)
+    months = [8]
+    years = range(2018, 2020)
     for y in years:
         for m in months:
-            if (m == 1 or m == 6) and y == 2024:
-                continue
             m_str = f"{m}"
             y_str = str(y)
 
@@ -268,6 +309,6 @@ if __name__ == "__main__":
 
             if os.path.exists(exam_path) and os.path.exists(key_path):
                 print(f"Processing pair: {exam_path}, {key_path}")
-                extract_questions_from_pdf(exam_path, key_path, m, y)
+                extract_questions_from_pdf(exam_path, key_path, key_path, m, y)
             else:
                 print(f"Missing file(s) for {m_str}{y_str}")
