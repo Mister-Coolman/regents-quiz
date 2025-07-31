@@ -283,9 +283,20 @@ def help_response():
 @app.route('/query', methods=['POST'])
 def query():
     print("inside query endpoint")
-    
     data = request.json
     user_query = data.get("query", "").strip()
+    sess_id = data.get("session_id")
+
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("""
+    INSERT INTO sessions(session_id, last_active)
+        VALUES (?, CURRENT_TIMESTAMP)
+    ON CONFLICT(session_id) DO
+        UPDATE SET last_active = CURRENT_TIMESTAMP
+    """, (sess_id,))
+    conn.commit()
+
     print(f"[INFO] Received query: {user_query}")
 
     # Help trigger
@@ -297,7 +308,7 @@ def query():
     print(f"[DEBUG] Parsed query -> Subject: {subject}, Topic: {clean_topic(topic)}, Type: {qtype}, Limit: {limit}")
 
     # If nothing was parsed, fallback to help
-
+    bot_resp = ""
     if intent == "list_topics":
         if not subject:
             return jsonify({"response": "No topics found for that subject.<br>Try something like 'List topics for Algebra I'"})
@@ -306,8 +317,8 @@ def query():
             # Build an HTML bullet list
             title = f"Available topics for <b>{subject}</b>:" if subject else "Available topics:"
             items = "".join(f"<li>{t}</li>" for t in topics)
-            html = f"{title}<ul style='margin-top:0.5rem'>{items}</ul>"
-            return jsonify({"response": html})
+            bot_resp = f"{title}<ul style='margin-top:0.5rem'>{items}</ul>"
+            return jsonify({"response": bot_resp})
         else:
             return jsonify({"response": "No topics found for that subject."})
 
@@ -319,8 +330,8 @@ def query():
         if topic:   parts.append(topic)
         if qtype:   parts.append(qtype)
         label = " ".join(parts) or "all questions"
-        resp = f"There are {cnt} {label} in the database."
-        return jsonify({"response": resp})
+        bot_resp = f"There are {cnt} {label} in the database."
+        return jsonify({"response": bot_resp})
     
     if not any([subject, topic, qtype]):
         print("[WARN] Query parsing returned empty fields")
@@ -332,6 +343,11 @@ def query():
     if not questions:
         print("[WARN] No questions found for given criteria.")
         return jsonify({"response": "No questions found for your query. Try being more specific, like '5 Algebra I MCQs on exponents'."})
+    cur.execute("""
+      INSERT INTO session_messages(session_id, sender, text)
+      VALUES (?, 'student', ?)
+    """, (sess_id, user_query))
+    conn.commit()
 
     pdf_path = generate_pdf(questions, "questions_output.pdf")
     print(f"[INFO] PDF generated at {pdf_path}")
@@ -341,7 +357,31 @@ def query():
 
     summary = f"Here are {len(questions)} {qtype or ''} questions on '{topic or subject}':"
     pdf_link = f"<a href='{download_url}' target='_blank'>📄 Click here to view/download the PDF</a>"
-    
+    bot_resp = f"{summary}<br><br>{pdf_link}"
+
+    cur.execute("""
+      INSERT INTO session_messages(session_id, sender, text)
+      VALUES (?, 'bot', ?)
+    """, (sess_id, bot_resp))
+    conn.commit()
+
+    bot_msg_id = cur.lastrowid
+    print(f"Message_ID: {bot_msg_id}")
+    print(questions)
+    for i, q in enumerate(questions):
+        cur.execute("""
+        INSERT INTO session_questions
+            (session_id, message_idx, question_idx, question_id, question_data)
+        VALUES (?, ?, ?, ?, ?)
+        """, (
+        sess_id,
+        bot_msg_id,
+        i,
+        q["id"],
+        json.dumps(q, ensure_ascii=False)
+        ))
+        conn.commit()
+    conn.close()
     return jsonify({
       "response": summary + "<br><br>" + pdf_link,
       "questions": questions    # 👈 send back the raw question objects
@@ -351,10 +391,57 @@ def query():
 def serve_image(filename):
     return send_from_directory(IMG_DIR, filename)
 
-
 @app.route('/download', methods=['GET'])
 def download():
     return send_file(os.path.join(PDF_DIR, "questions_output.pdf"), as_attachment=False)
+
+@app.route('/history/<session_id>')
+def history(session_id):
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+
+    cur.execute("""
+      SELECT
+        sm.id        AS id,
+        sm.sender    AS sender,
+        sm.text      AS text,
+        GROUP_CONCAT(sq.question_data, '||') AS questions_concat
+      FROM session_messages sm
+      LEFT JOIN session_questions sq
+        ON sm.session_id = sq.session_id
+       AND sm.id         = sq.message_idx
+      WHERE sm.session_id = ?
+      GROUP BY sm.id
+      ORDER BY sm.created_at
+    """, (session_id,))
+
+    rows = []
+    for r in cur.fetchall():
+        row = dict(r)
+        qc = row.pop('questions_concat')
+        row['questions'] = qc.split('||') if qc else []
+        # parse each JSON string back into dict
+        row['questions'] = [json.loads(q) for q in row['questions']]
+        rows.append(row)
+
+    conn.close()
+    return jsonify(rows)
+@app.route('/end_session', methods=['POST'])
+def end_session():
+    sess_id = request.json.get("session_id")
+    if not sess_id:
+        return jsonify({"error": "session_id required"}), 400
+
+    conn = sqlite3.connect(DB_PATH)
+    cur  = conn.cursor()
+    cur.execute("DELETE FROM session_messages WHERE session_id = ?", (sess_id,))
+    cur.execute("DELETE FROM sessions         WHERE session_id = ?", (sess_id,))
+    cur.execute("DELETE FROM session_questions WHERE session_id = ?", (sess_id,))  
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "ok"})
 
 if __name__ == '__main__':
     print("[INFO] Initializing database...")
