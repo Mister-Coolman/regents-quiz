@@ -15,7 +15,7 @@ for year in years:
     for mm in months:
         yy = str(year)[2:]  # last 2 digits of year
         for filetype, folder in [("exam", EXAM_DIR), ("sk", KEY_DIR)]:
-            filename = f"algone{mm}{year}-{filetype}.pdf"
+            filename = f"algtwo{mm}{year}-{filetype}.pdf"
             url = f"{BASE_URL}/{mm}{yy}/{filename}"
             output_path = os.path.join(folder, filename)
             if os.path.exists(output_path):

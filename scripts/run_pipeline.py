@@ -25,28 +25,51 @@ OUTPUT_DIR = "../backend/images"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 cluster_map = {
-    "N-RN.B": "The Real Number System",
-    "N-Q.A": "Quantities",
-    "N-QA": "Quantities",
+    "N-RN.A": "Exponents and Radicals",
+    "N-CN.A": "Complex Numbers",
+
+    # Seeing Structure in Expressions
     "A-SSE.A": "Seeing Structure in Expressions",
     "A-SSE.B": "Seeing Structure in Expressions",
-    "A-APR.A": "Arithmetic with Polynomials and Rational Expressions",
-    "A-APR.B": "Arithmetic with Polynomials and Rational Expressions",
+
+    # Arithmetic with Polynomials & Rational Expressions
+    "A-APR.B": "Factoring Polynomials",
+    "A-APR.D": "Rational Expressions",
+
+    # Creating Equations
     "A-CED.A": "Creating Equations",
+
+    # Reasoning with Equations & Inequalities
     "A-REI.A": "Reasoning with Equations and Inequalities",
-    "A-REI.B": "Solving One Variable Equations",
-    "A-REI.C": "Systems of Equations",
-    "A-REI.D": "Reasoning with Equations and Inequalities",
+    "A-REI.B": "Solving equations and inequalities in one variable",
+    "A-REI.C": "Solving systems of equations",
+    "A-REI.D": "Graphically solving equations and inequalities",
+
+    # Interpreting Functions
     "F-IF.A": "Interpreting Functions",
     "F-IF.B": "Interpreting Functions",
     "F-IF.C": "Interpreting Functions",
+
+    # Building Functions
     "F-BF.A": "Building Functions",
     "F-BF.B": "Building Functions",
+
+    # Linear, Quadratic, and Exponential Models
     "F-LE.A": "Linear, Quadratic, and Exponential Models",
     "F-LE.B": "Linear, Quadratic, and Exponential Models",
+
+    # Trigonometric Functions
+    "F-TF.A": "Trigonometric Functions",
+    "F-TF.B": "Modeling with Trigonometric Functions",
+    "F-TF.C": "Trigonometric Identities",
+
+    # Statistics & Probability
     "S-ID.A": "Interpreting Categorical and Quantitative Data",
     "S-ID.B": "Interpreting Categorical and Quantitative Data",
-    "S-ID.C": "Interpreting Categorical and Quantitative Data"
+    "S-IC.A": "Making Inferences and Justifying Conclusions",
+    "S-IC.B": "Making Inferences and Justifying Conclusions",
+    "S-CP.A": "Conditional Probability and the Rules of Probability",
+    "S-CP.B": "Conditional Probability and the Rules of Probability",
 }
 
 def classify_topic(text):
