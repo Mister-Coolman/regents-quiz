@@ -6,6 +6,7 @@ import MessageBubble                    from './MessageBubble';
 import TypingIndicator                  from './TypingIndicator';
 import styles                           from '../styles/Chat.module.css';
 
+const apiBase = import.meta.env.VITE_API_BASE_URL || '';
 
 export default function Chat() {
   const [sessionId, setSessionId] = useState('');
@@ -30,7 +31,7 @@ export default function Chat() {
   }, [messages, loading, activeQuizMsgIdx]);
   useEffect(() => {
     if (!sessionId) return;
-     fetch(`/api/history/${sessionId}`)
+     fetch(`${apiBase}/api/history/${sessionId}`)
        .then(res => res.json())
        .then(data => {
          if (Array.isArray(data) && data.length > 0) {
@@ -62,7 +63,7 @@ export default function Chat() {
     setMessages(ms => [...ms, { id: 'typing', sender: 'bot', typing: true }]);
 
     try {
-      const res  = await fetch('/api/query', {
+      const res  = await fetch(`${apiBase}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: text, session_id: sessionId }),
@@ -102,7 +103,7 @@ export default function Chat() {
     localStorage.removeItem('regentsSessionId');
   
     // 3) optionally tell the backend to delete session
-    fetch('/api/end_session', {
+    fetch(`${apiBase}/api/end_session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId })
