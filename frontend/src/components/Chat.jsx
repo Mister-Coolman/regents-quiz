@@ -118,7 +118,7 @@ export default function Chat() {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        Algebra I Regents Practice AI Chatbot
+        Algebra Regents Practice AI Chatbot
         <button
           className={styles.clearHistoryBtn}
           onClick={handleClearHistory}
