@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import styles from '../styles/QuizPlayer.module.css';
 
+const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+
 export default function QuizPlayer({ questions = [], onFinish }) {
   // 1) Guard against empty questions
   if (!Array.isArray(questions) || questions.length === 0) {
@@ -62,7 +64,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
       {/* Question image */}
       {current.question_image_path && (
         <img
-          src={current.question_image_path}
+        src={`${apiBase}/static/${current.question_image_path}`}
           alt="Question diagram"
           style={{
             width: '100%',
