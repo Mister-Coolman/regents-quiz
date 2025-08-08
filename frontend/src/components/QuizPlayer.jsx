@@ -64,7 +64,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
       {/* Question image */}
       {current.question_image_path && (
         <img
-        src={`${apiBase}/static/${current.question_image_path}`}
+        src={`${apiBase}/app/static/${current.question_image_path}`}
           alt="Question diagram"
           style={{
             width: '100%',
