@@ -16,8 +16,3 @@ A web app that helps students prepare for New York State Regents exams using AI.
 ### Frontend (Vite + React)
 
 Hosted on **Netlify**
-
-1. Install dependencies:
-
-   ```bash
-   npm install
