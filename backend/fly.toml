@@ -1,0 +1,25 @@
+# fly.toml
+app = "backend-winter-smoke-307"
+primary_region = "ewr"
+
+[build]
+  # if using a Dockerfile, leave this out or set appropriately
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+  [[http_service.checks]]  # liveness
+    method = "GET"
+    path = "/healthz"
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "10s"

@@ -1,24 +1,54 @@
 # Flask backend (query interface + SQLite + PDF generation + Ollama LLM parser)
+print("✅ Starting app.py — deployed version")
 
-from flask import Flask, request, jsonify, send_file, url_for, send_from_directory
+from flask import Flask, request, jsonify, send_file, url_for, send_from_directory, abort
 from flask_cors import CORS
 import sqlite3
 import json
 from fpdf import FPDF
 import os
 import subprocess
+import uuid
 from werkzeug.middleware.proxy_fix import ProxyFix
 import re
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from dotenv import load_dotenv
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}}, supports_credentials=True)
-CORS(app, origins=["http://localhost:5173", "https://*.ngrok-free.app"])
-CORS(app, origins=["https://perfectly-knowing-cow.ngrok-free.app"])
-CORS(app, resources={r"/*": {"origins": "https://perfectly-knowing-cow.ngrok-free.app"}})
+app = Flask(__name__, static_folder='static', static_url_path='/static')
+FIREWORKS_URL = "https://api.fireworks.ai/inference/v1/chat/completions"
+load_dotenv()
+api_key = os.getenv("FIREWORKS_API_KEY")
+if not api_key:
+    print("[WARN] FIREWORKS_API_KEY not set; parsing will fail on first request")
+FIREWORKS_HEADERS = {
+    "Accept": "application/json",
+    "Authorization": f"Bearer {api_key}",
+    "Content-Type": "application/json"
+}
+session = requests.Session()
+session.headers.update({"Connection": "keep-alive"})
+
+adapter = HTTPAdapter(
+    pool_connections=20,
+    pool_maxsize=20,
+    max_retries=Retry(total=2, backoff_factor=0.2, status_forcelist=(502, 503, 504))
+)
+
+session.mount("http://", adapter)
+session.mount("https://", adapter)
+
+CORS(app, resources={r"/api/*": {"origins": [
+    "http://localhost:5173",
+    "https://*.ngrok-free.app",
+    "https://perfectly-knowing-cow.ngrok-free.app",
+    "https://nystateregentsprep.netlify.app"
+]}}, supports_credentials=True)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
-DB_PATH = "/Users/arjunrangarajan/regents-quiz/regents-quiz/backend/regentsqs.db"
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))  # /regents-quiz/backend
-IMG_DIR = os.path.abspath(os.path.join(BASE_DIR, "images")) # /regents-quiz/backend/images
+DB_PATH = os.path.abspath(os.path.join(BASE_DIR, "regentsqs.db"))
+IMG_DIR = os.path.join(os.path.dirname(__file__), "static") # /regents-quiz/backend/static/images
 PDF_DIR = os.path.abspath(os.path.join(BASE_DIR, "pdfs"))  # /regents-quiz/backend/pdfs
 OUTPUT_PDF_DIR = os.path.abspath(os.path.join(BASE_DIR, "output_pdf")) # /regents-quiz/backend/output_pdf
 os.makedirs(PDF_DIR, exist_ok=True)
@@ -40,77 +70,165 @@ def init_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sessions (
+        session_id   TEXT PRIMARY KEY,
+        started_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_active  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );)
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS session_messages (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id   TEXT    NOT NULL,
+        sender       TEXT    NOT NULL,
+        text         TEXT    NOT NULL,
+        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(session_id) REFERENCES sessions(session_id)
+            ON DELETE CASCADE
+        );
+    """)
+    cursor.execute("""
+    CREATE TABLE session_questions (
+        session_id    TEXT    NOT NULL,
+        message_idx   INTEGER NOT NULL,
+        question_idx  INTEGER NOT NULL,
+        question_id   INTEGER NOT NULL,
+        question_data TEXT    NOT NULL,
+        PRIMARY KEY (session_id, message_idx, question_idx),
+        FOREIGN KEY (session_id, message_idx)
+            REFERENCES session_messages(session_id, id)
+            ON DELETE CASCADE
+    );
+""")
     conn.commit()
     conn.close()
 
+@app.get("/healthz")
+def healthz():
+    return {"status": "alive"}, 200
+
 def parse_query_with_ollama(query_text):
+    subject_topics = {
+        "Algebra I": [
+            "The Real Number System",
+            "Quantities",
+            "Seeing Structure in Expressions",
+            "Arithmetic with Polynomials and Rational Expressions",
+            "Creating Equations",
+            "Reasoning with Equations and Inequalities",
+            "Solving One Variable Equations",
+            "Systems of Equations",
+            "Interpreting Functions",
+            "Building Functions",
+            "Linear, Quadratic, and Exponential Models",
+            "Interpreting categorical and quantitative data"
+        ],
+        "Algebra II": [
+            "Exponents and Radicals",
+            "Quantities in Modeling",
+            "Complex Numbers",
+            "Seeing Structure in Expressions",
+            "Factoring Polynomials",
+            "Polynomial Identities",
+            "Rational Expressions",
+            "Creating Equations",
+            "Reasoning with Equations and Inequalities",
+            "Solving equations and inequalities in one variable",
+            "Solving systems of equations",
+            "Graphically solving equations and inequalities",
+            "Interpreting Functions",
+            "Building Functions",
+            "Linear, Quadratic, and Exponential Models",
+            "Trigonometric Functions",
+            "Modeling with Trigonometric Functions",
+            "Trigonometric Identities",
+            "Interpreting Categorical and Quantitative Data",
+            "Making Inferences and Justifying Conclusions",
+            "Conditional Probability and the Rules of Probability",
+            "Equations of Parabolas with Focus and Directrix"
+        ],
+        "Geometry": [
+            'Transformations in the Plane',
+            'Rigid Motions and Triangle Congruence',
+            'Proving Geometric Theorems',
+            'Constructions',
+            'Similarity Transformations',
+            'Proving Theorems Using Similarity',
+            'Right Triangle Trigonometry',
+            'Theorems with Circles',
+            'Arc Lengths and Areas of Circles',
+            'Equations of Circles',
+            'Coordinate Geometry',
+            'Volume',
+            'Cross Sections',
+            'Modeling with Geometry'
+        ]
+    }
+    topic_whitelist_md = []
+    for subject, topics in subject_topics.items():
+        topic_whitelist_md.append(f"#### {subject} topics")
+        for t in topics:
+            topic_whitelist_md.append(f"- {t}")
+    topic_whitelist_section = "\n".join(topic_whitelist_md)
     print(f"[DEBUG] Parsing query with Ollama: {query_text}")
     prompt = f"""
-        You are a precise JSON‑only parser for Regents practice questions. Given a student’s raw request, extract exactly these fields and nothing else in a single‑line JSON object:
+        You are a precise JSON-only parser for Regents practice questions. Given a student’s raw request, extract exactly these fields and nothing else in a single-line JSON object:
 
         • intent: one of "generate", "list_topics", or "count_questions"  
-            - "generate": return actual practice questions  
-            - "list_topics": list all available topics (optionally filtered by subject)  
-            - "count_questions": return the count of questions matching the filters  
+        • "generate": return actual practice questions  
+        • "list_topics": list all available topics (optionally filtered by subject)  
+        • "count_questions": return the count of questions matching the filters  
 
-        • subject: string, e.g. "Algebra I", "Geometry", or "ELA" (empty if unspecified)  
-        • topic: string, exactly one of the valid topics (empty if no match)  
+        • subject: one of "Algebra I", "Algebra II", "Geometry", or "ELA" (empty if unspecified)  
+        • topic: string; if intent="generate", must be exactly one of the valid topics for the chosen subject (empty otherwise)  
         • type: one of "MCQ", "CRQ", or "Essay" (treat "SAQ" or "Short Answer" as "CRQ"; empty if unspecified)  
-        • limit: integer number of questions (default to 5 for "generate"; must be 0 for other intents)  
+        • limit: integer number of questions (default to 5 for "generate"; must be 0 for "list_topics" or "count_questions")  
 
-        ### Default rules & error‐proofing
-        - If the user’s text clearly asks to “list topics” or “what topics”, set intent="list_topics"; subject may still be filled.  
-        - If the user’s text asks “how many” or “count”, set intent="count_questions"; ignore limit.  
+        ### Default rules & error-proofing  
+        - If the text asks to “list topics” or “what topics”, set intent="list_topics" (subject may still be filled).  
+        - If it asks “how many” or “count”, set intent="count_questions" (ignore or zero out limit).  
         - Otherwise default intent="generate".  
-        - If the user specifies a non‑numeric count (“some”, “a few”), default limit to 5.  
-        - Accept spelled‑out numbers up to “twenty” (e.g. “ten” → 10); otherwise default limit=5.  
+        - Non-numeric counts (“some”, “a few”) → limit=5.  
+        - Accept spelled-out numbers up to “twenty” (e.g. “ten”→10); else default limit=5.  
         - Always output valid JSON; do not include any extra text, explanations, or markdown.
 
-        ### Algebra I topic white‑list (choose exactly one if intent is "generate")
-        1. The Real Number System  
-        2. Quantities  
-        3. Seeing Structure in Expressions  
-        4. Arithmetic with Polynomials and Rational Expressions  
-        5. Creating Equations  
-        6. Reasoning with Equations and Inequalities  
-        7. Solving One Variable Equations  
-        8. Systems of Equations  
-        9. Interpreting Functions  
-        10. Building Functions  
-        11. Linear, Quadratic, and Exponential Models  
-        12. Interpreting categorical and quantitative data
+        ### Subject → Topic Whitelist  
+        {topic_whitelist_section}
 
         ### JSON schema (exactly these keys; no extras)
         {{  
-        "intent":    "<generate|list_topics|count_questions>",  
-        "subject":   "<subject or empty string>",  
-        "topic":     "<one of the above topics or empty string>",  
-        "type":      "<MCQ|CRQ|Essay or empty string>",  
-        "limit":     <integer: number of questions or 0>  
+        "intent":  "<generate|list_topics|count_questions>",  
+        "subject": "<subject or empty string>",  
+        "topic":   "<one valid topic for that subject or empty string>",  
+        "type":    "<MCQ|CRQ|Essay or empty string>",  
+        "limit":   <integer number of questions or 0>  
         }}
 
         Student Query: "{query_text}"
-    """
-
+            """.strip()
     try:
-        result = subprocess.run(
-            ["ollama", "run", "llama3"],
-            input=prompt,
-            text=True,
-            capture_output=True,
-            timeout=15
-        )
-        raw = result.stdout.strip()
+        response = session.post(
+                FIREWORKS_URL,
+                headers=FIREWORKS_HEADERS,
+                json={
+                    "model": "accounts/fireworks/models/llama-v3p3-70b-instruct",
+                    "messages": [
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 120,
+                    "response_format": {"type": "json_object"}
+                }
+            )
+        
+        response.raise_for_status()
+
+
+        raw = response.json()["choices"][0]["message"]["content"]
         print(f"[DEBUG] Ollama raw output:\n{raw}")
 
-        # 1) Find the first "{" and the last "}"
-        start = raw.find('{')
-        end   = raw.rfind('}')
-        if start == -1 or end == -1 or end < start:
-            raise ValueError("Could not locate JSON object in Ollama output")
-
-        json_str = raw[start:end+1]
-        parsed   = json.loads(json_str)
+        parsed = json.loads(raw)
 
         return (
             parsed.get("intent",       "generate"),
@@ -191,7 +309,6 @@ def generate_pdf(questions, filename):
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     answer_key = []
-    IMG_DIR = "/Users/arjunrangarajan/regents-quiz/regents-quiz/backend"
     for idx, q in enumerate(questions, start=1):
         pdf.add_page()
         pdf.set_font("Arial", size=12)
@@ -206,7 +323,7 @@ def generate_pdf(questions, filename):
         pdf.cell(0, 8, header_safe, ln=True)
 
         # Insert image…
-        image_path = os.path.join(IMG_DIR, q["question_image_path"])
+        image_path = os.path.join(IMG_DIR.rstrip("images/"), q["question_image_path"])
         try:
             if os.path.exists(image_path):
                 page_w = pdf.w - 2 * pdf.l_margin
@@ -229,58 +346,69 @@ def generate_pdf(questions, filename):
         for i, ans in enumerate(answer_key, start=1):
             pdf.multi_cell(0, 10, f"Page {i}: {ans}")
 
-    path = os.path.join(PDF_DIR, filename)
+    path = os.path.join(OUTPUT_PDF_DIR, filename)
     pdf.output(path)
     return path
 
 def help_response():
     help_text ="""
-    🤖 <b>How to Use the Regents Chatbot</b><br><br>
+    🤖 <b>How to Use the Chatbot</b><br><br>
+    Right now, I support three subjects: Algebra I, Geometry, and Algebra II <br>
     You can ask me to do three things:
     <ul style="margin-top:0.5rem">
-      <li><b>List Topics</b> – e.g. “What topics are there?” or “List Algebra I topics”</li>
-      <li><b>Count Questions</b> – e.g. “How many MCQs on systems of equations?” or “Count Algebra I CRQs on real numbers</li>
+      <li><b>List Topics</b> – e.g. “List Algebra I topics”</li>
+      <li><b>Count Questions</b> – e.g. “How many MCQs on one variable equations?”</li>
       <li><b>Generate Practice Questions</b> – e.g. “Give me 5 Algebra I MCQs on interpreting functions</li>
     </ul>
-    <br>
+    <hr>
     After you generate questions, you’ll see:
     <ul>
       <li>📄 A PDF link to download your questions</li>
       <li>▶️ A “Take Interactive Quiz” button so you can answer them right here!</li>
     </ul>
-    <br>
-
-    <b>✅ More Examples:</b><br>
-    – “List topics for Algebra I”<br>
-    – “Count CRQs on systems of equations in Algebra I”<br><br>
-
     <hr>
     <b>📘 Type Definitions:</b>
     <ul>
       <li><b>MCQ</b> = Multiple Choice Question</li>
       <li><b>CRQ</b> = Constructed Response Question</li>
-      <li><b>Essay</b> = Long‑form written response</li>
-    </ul>
-    <hr>
-    <b>ℹ️ Valid Algebra I topics:</b>
-    <ul>
-      <li>The Real Number System</li>
-      <li>Quantities</li>
-      <li>Seeing Structure in Expressions</li>
-      <li>Arithmetic with Polynomials and Rational Expressions</li>
-      <li>Creating Equations</li>
-      <li>Reasoning with Equations and Inequalities</li>
-      <li>Solving One Variable Equations</li>
-      <li>Systems of Equations</li>
-      <li>Interpreting Functions</li>
-      <li>Building Functions</li>
-      <li>Linear, Quadratic, and Exponential Models</li>
-      <li>Interpreting categorical and quantitative data</li>
     </ul>
     """
     return jsonify({"response": help_text})
 
-@app.route('/query', methods=['POST'])
+@app.route('/debug/image')
+def debug_image():
+    rel = request.args.get('path', '')
+    # normalize: allow “images/…” or “static/images/…”
+    rel = rel.lstrip('/')
+    if rel.startswith('static/'):
+        rel = rel[len('static/'):]
+    if rel.startswith('images/'):
+        rel = rel[len('images/'):]
+
+    root = os.path.join(app.static_folder or os.path.join(BASE_DIR, "static"), "images")
+    abs_path = os.path.join(root, rel)
+
+    info = {
+        "cwd": os.getcwd(),
+        "base_dir": BASE_DIR,
+        "static_folder": app.static_folder,
+        "images_root": root,
+        "requested_rel": rel,
+        "abs_path": abs_path,
+        "images_root_exists": os.path.exists(root),
+        "file_exists": os.path.exists(abs_path),
+        "env_VITE_API_BASE_URL": os.environ.get("VITE_API_BASE_URL"),
+    }
+
+    # include small listing for context
+    try:
+        info["siblings"] = sorted(os.listdir(os.path.dirname(abs_path)))[:50]
+    except Exception as e:
+        info["siblings_error"] = str(e)
+
+    return jsonify(info)
+
+@app.route('/api/query', methods=['POST'])
 def query():
     print("inside query endpoint")
     data = request.json
@@ -349,10 +477,11 @@ def query():
     """, (sess_id, user_query))
     conn.commit()
 
-    pdf_path = generate_pdf(questions, "questions_output.pdf")
+    unique_filename = f"questions_{uuid.uuid4().hex}.pdf"
+    pdf_path = generate_pdf(questions, unique_filename)
     print(f"[INFO] PDF generated at {pdf_path}")
     
-    download_url = url_for('download', _external=True)
+    download_url = url_for('download', file=unique_filename, _external=True)
     print(f"[INFO] Download URL: {download_url}")
 
     summary = f"Here are {len(questions)} {qtype or ''} questions on '{topic or subject}':"
@@ -384,18 +513,48 @@ def query():
     conn.close()
     return jsonify({
       "response": summary + "<br><br>" + pdf_link,
+      "pdf_url": download_url,
       "questions": questions    # 👈 send back the raw question objects
     })
 
+# @app.route('/images/<path:filename>')
+# def serve_image(filename):
+#     return send_from_directory(os.path.join(IMG_DIR, "images"), filename)
+
+IMG_DIR = os.path.join(app.static_folder, 'images')
+
 @app.route('/images/<path:filename>')
-def serve_image(filename):
+def serve_images(filename):
+    abs_path = os.path.join(IMG_DIR, filename)
+    if not os.path.exists(abs_path):
+        abort(404)
     return send_from_directory(IMG_DIR, filename)
 
-@app.route('/download', methods=['GET'])
+@app.route('/api/download', methods=['GET'])
 def download():
-    return send_file(os.path.join(PDF_DIR, "questions_output.pdf"), as_attachment=False)
+    filename = request.args.get('file', '').strip()
+    if not filename:
+        return jsonify({"error": "missing ?file=<filename>.pdf"}), 400
 
-@app.route('/history/<session_id>')
+    # Security: prevent path traversal
+    safe_name = os.path.basename(filename)
+    if safe_name != filename:
+        return jsonify({"error": "invalid filename"}), 400
+
+    abs_path = os.path.join(OUTPUT_PDF_DIR, safe_name)
+    if not os.path.exists(abs_path):
+        return jsonify({"error": "file not found"}), 404
+
+    # Let it open inline in the browser; set a download name
+    return send_file(
+        abs_path,
+        as_attachment=False,
+        download_name=safe_name,
+        mimetype="application/pdf",
+        max_age=3600
+    )
+
+@app.route('/api/history/<session_id>')
 def history(session_id):
 
     conn = sqlite3.connect(DB_PATH)
@@ -428,7 +587,7 @@ def history(session_id):
 
     conn.close()
     return jsonify(rows)
-@app.route('/end_session', methods=['POST'])
+@app.route('/api/end_session', methods=['POST'])
 def end_session():
     sess_id = request.json.get("session_id")
     if not sess_id:
@@ -443,8 +602,17 @@ def end_session():
     conn.close()
     return jsonify({"status": "ok"})
 
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_vue(path):
+    if path != "" and os.path.exists(os.path.join("dist", path)):
+        return send_from_directory("dist", path)
+    else:
+        return send_from_directory("dist", "index.html")
+
 if __name__ == '__main__':
     print("[INFO] Initializing database...")
     init_db()
-    print("[INFO] Starting Flask server on http://localhost:5050")
-    app.run(debug=True,port=5050)
+    print("[INFO] Starting Flask server on http://localhost:8080")
+    port = int(os.getenv("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
