@@ -55,7 +55,7 @@ def parse_query_with_ollama(query_text):
         • "count_questions": return the count of questions matching the filters
 
         • subject: one of "Algebra I", "Algebra II", "Geometry", or "ELA" (empty if unspecified)
-        • topic: string; if intent="generate", must be exactly one of the valid topics for the chosen subject (empty otherwise)
+        • topic: string; must exactly match one entry in the Subject → Topic Whitelist below (empty if it doesn't match anything)
         • type: one of "MCQ", "CRQ", or "Essay" (treat "SAQ" or "Short Answer" as "CRQ"; empty if unspecified)
         • limit: integer number of questions (default to 5 for "generate"; must be 0 for "list_topics" or "count_questions")
 
@@ -65,6 +65,13 @@ def parse_query_with_ollama(query_text):
         - Otherwise default intent="generate".
         - Non-numeric counts (“some”, “a few”) → limit=5.
         - Accept spelled-out numbers up to “twenty” (e.g. “ten”→10); else default limit=5.
+        - The student does not have to name a subject to get a topic filled in. Some topic names appear
+          under more than one subject (e.g. "Interpreting Functions" is both Algebra I and Algebra II) —
+          match the topic from the whitelist regardless of whether subject is known, and leave subject
+          empty if it wasn't stated or implied.
+        - Match topics case-insensitively and tolerate minor wording differences (plural/singular,
+          extra/missing words) as long as the intent clearly points to one whitelist entry. Do not
+          invent a topic that isn't in the whitelist.
         - Always output valid JSON; do not include any extra text, explanations, or markdown.
 
         ### Subject → Topic Whitelist

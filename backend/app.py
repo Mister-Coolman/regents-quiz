@@ -113,7 +113,10 @@ def query():
     download_url = url_for('download', file=unique_filename, _external=True)
     print(f"[INFO] Download URL: {download_url}")
 
-    summary = f"Here are {len(questions)} {qtype or ''} questions on '{topic or subject}':"
+    label = topic or subject
+    type_part = f"{qtype} " if qtype else ""
+    topic_part = f" on '{label}'" if label else ""
+    summary = f"Here are {len(questions)} {type_part}questions{topic_part}:"
     pdf_link = f"<a href='{download_url}' target='_blank'>📄 Click here to view/download the PDF</a>"
     bot_resp = f"{summary}<br><br>{pdf_link}"
 

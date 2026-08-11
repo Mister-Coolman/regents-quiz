@@ -77,10 +77,16 @@ def build_topic_whitelist_markdown() -> str:
 
 VALID_SUBJECTS = set(SUBJECT_TOPICS.keys()) | {"ELA"}
 VALID_TYPES = {"MCQ", "CRQ", "Essay"}
+ALL_TOPICS = {t for topics in SUBJECT_TOPICS.values() for t in topics}
 
 
 def is_valid_topic(subject: str, topic: str) -> bool:
-    return topic in SUBJECT_TOPICS.get(subject, [])
+    """A topic is valid for its named subject, or — if no subject was given —
+    for any subject, since several topic names (e.g. "Interpreting Functions")
+    are shared across subjects."""
+    if subject:
+        return topic in SUBJECT_TOPICS.get(subject, [])
+    return topic in ALL_TOPICS
 
 
 def is_valid_subject(subject: str) -> bool:
