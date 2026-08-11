@@ -1,4 +1,11 @@
-/frontend/node_modules/
+node_modules/
+dist/
 /backend/regentsqs.db
 /backend/pdfs
+/backend/output_pdf
 /pdfs
+*.pyc
+__pycache__/
+*.pt
+.DS_Store
+/backend/.env
