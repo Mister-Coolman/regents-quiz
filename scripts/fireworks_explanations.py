@@ -185,6 +185,33 @@ Solve it yourself and write a worked solution a student could follow.
 {RESPONSE_FORMAT}"""
 
 
+# A choice the Answer section asserts as the conclusion. Clauses that dismiss a
+# choice ("choice (4) is incorrect") are stripped first so they aren't read as
+# the answer.
+ASSERTED_CHOICE_RE = re.compile(r'(?:choice|option)\s*\(?([1-4])\)?', re.IGNORECASE)
+DISMISSED_CHOICE_RE = re.compile(
+    r'(?:choice|option)\s*\(?[1-4]\)?[^.]{0,40}?\b(?:is|are)\s+(?:in|not)?correct',
+    re.IGNORECASE,
+)
+
+
+def contradicts_key(content: str, qtype: str, correct_answer: str) -> bool:
+    """True when an MCQ explanation concludes a different choice than the
+    scoring key. The model is told the answer, so disagreeing with it means the
+    reasoning went somewhere wrong -- either bad math or mislabelling which
+    numbered option its conclusion corresponds to. Both have been observed."""
+    if qtype != "MCQ" or "**Answer**" not in content:
+        return False
+    try:
+        key = int(correct_answer)
+    except (TypeError, ValueError):
+        return False
+
+    tail = DISMISSED_CHOICE_RE.sub("", content.split("**Answer**")[-1])
+    named = {int(n) for n in ASSERTED_CHOICE_RE.findall(tail)}
+    return bool(named) and key not in named
+
+
 def is_well_formatted(content: str) -> bool:
     if not content.strip().startswith(REQUIRED_HEADERS[0]):
         return False
@@ -270,7 +297,7 @@ def generate_explanation(image_path, qtype, correct_answer, topic=""):
             max_tokens = min(max_tokens * 2, 3000)
             ok = False
             continue
-        ok = is_well_formatted(content)
+        ok = is_well_formatted(content) and not contradicts_key(content, qtype, correct_answer)
         if ok:
             break
 
