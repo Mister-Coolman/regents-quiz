@@ -314,6 +314,44 @@
   color: var(--pencil);
 }
 
+.hintsUsedNote {
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--pencil);
+  margin: -0.75rem 0 1.25rem;
+}
+
+.resumedTag {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--grid-line);
+  border-radius: 4px;
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  vertical-align: middle;
+}
+
+.restartBtn {
+  width: 100%;
+  padding: 0.6rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  background: transparent;
+  color: var(--pencil);
+  border: 1px solid var(--grid-line);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.restartBtn:hover {
+  border-color: var(--regents-blue-bright);
+  color: var(--regents-blue-bright);
+}
+
 .perfectNote {
   text-align: center;
   color: var(--pencil);

@@ -1,10 +1,37 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import MathText from './MathText';
 import { buildHints } from '../lib/explanation';
 import styles from '../styles/QuizPlayer.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
 const OPTIONS = [1, 2, 3, 4];
+
+// Progress lives in localStorage: it belongs to this device, and the backend
+// session tables sit on an ephemeral disk that is wiped on every redeploy.
+function loadProgress(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveProgress(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* private mode or quota -- progress just won't persist */
+  }
+}
+
+function clearProgress(key) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* nothing to do */
+  }
+}
 
 /** Full explanation behind a disclosure, so the answer isn't dumped on sight. */
 function ExplanationPanel({ text, defaultOpen = false }) {
@@ -46,18 +73,36 @@ export default function QuizPlayer({ questions = [], onFinish }) {
     );
   }
 
-  const [idx, setIdx]               = useState(0);
+  // Progress is keyed by the exact set of questions, so reopening the same
+  // quiz resumes while a different set starts clean.
+  const storageKey = `regentsQuizProgress:${questions.map(q => q.id).join(',')}`;
+  const saved = loadProgress(storageKey);
+
+  const [idx, setIdx]               = useState(saved?.idx ?? 0);
   const [selected, setSel]          = useState(null);
-  const [score, setScore]           = useState(0);
-  const [missed, setMissed]         = useState([]);
+  // One entry per answered question: { [questionId]: wasCorrect }. Deriving the
+  // score from this instead of incrementing a counter keeps re-answering a
+  // question idempotent -- which happens whenever someone closes the quiz
+  // after checking an answer but before moving on, then reopens it.
+  const [results, setResults]       = useState(saved?.results ?? {});
   const [showAnswer, setShowAnswer] = useState(false);
   const [isCorrect, setIsCorrect]   = useState(false);
-  const [finished, setFinished]     = useState(false);
+  const [finished, setFinished]     = useState(saved?.finished ?? false);
   // How many hints the student has unlocked on the current question.
   const [hintLevel, setHintLevel]   = useState(0);
+  const [hintsUsed, setHintsUsed]   = useState(saved?.hintsUsed ?? 0);
+  // Captured once at mount: true only when this run picked up stored progress,
+  // rather than simply having advanced past the first question.
+  const [wasResumed, setWasResumed] = useState(() => Object.keys(saved?.results ?? {}).length > 0);
+
+  useEffect(() => {
+    saveProgress(storageKey, { idx, results, hintsUsed, finished });
+  }, [storageKey, idx, results, hintsUsed, finished]);
 
   const current = questions[idx];
   const { subject = '', month = '', year = '' } = current;
+  const score = Object.values(results).filter(Boolean).length;
+  const missed = questions.filter(q => results[q.id] === false);
 
   const hints = buildHints(current.explanation);
   const shownHints = hints.slice(0, hintLevel);
@@ -67,9 +112,21 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   const handleCheck = () => {
     const correct = String(selected) === String(current.correct_answer);
     setIsCorrect(correct);
-    if (correct) setScore(s => s + 1);
-    else setMissed(m => [...m, current]);
+    setResults(r => ({ ...r, [current.id]: correct }));
     setShowAnswer(true);
+  };
+
+  const handleRestart = () => {
+    clearProgress(storageKey);
+    setIdx(0);
+    setSel(null);
+    setResults({});
+    setShowAnswer(false);
+    setIsCorrect(false);
+    setFinished(false);
+    setHintLevel(0);
+    setHintsUsed(0);
+    setWasResumed(false);
   };
 
   // Next question or finish
@@ -97,8 +154,14 @@ export default function QuizPlayer({ questions = [], onFinish }) {
           <span className={styles.scoreTotal}>{questions.length}</span>
         </div>
 
+        <p className={styles.hintsUsedNote}>
+          {hintsUsed === 0
+            ? 'No hints used.'
+            : `${hintsUsed} hint${hintsUsed === 1 ? '' : 's'} used.`}
+        </p>
+
         {missed.length === 0 ? (
-          <p className={styles.perfectNote}>Every question, correct. Nice work.</p>
+          <p className={styles.perfectNote}>Every question correct. Nice work.</p>
         ) : (
           <div className={styles.reviewSection}>
             <span className={styles.eyebrow}>Review Your Misses</span>
@@ -112,6 +175,10 @@ export default function QuizPlayer({ questions = [], onFinish }) {
             ))}
           </div>
         )}
+
+        <button onClick={handleRestart} className={styles.restartBtn}>
+          ↻ Start over
+        </button>
 
         <button onClick={onFinish} className={styles.nextBtn}>
           Close
@@ -131,6 +198,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
       <div className={styles.headerRow}>
         <h2 className={styles.questionCount}>
           Question {idx + 1} of {questions.length}
+          {wasResumed && <span className={styles.resumedTag}>resumed</span>}
         </h2>
         <div className={styles.metadata}>
           {subject} – {month} {year}
@@ -209,7 +277,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
                 <button
                   type="button"
                   className={styles.hintBtn}
-                  onClick={() => setHintLevel(l => l + 1)}
+                  onClick={() => { setHintLevel(l => l + 1); setHintsUsed(n => n + 1); }}
                 >
                   💡 {hintLevel === 0 ? 'Need a hint?' : 'Another hint'}
                   <span className={styles.hintCount}>{hintsLeft} left</span>
