@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import MathText from './MathText';
+import Confetti from './Confetti';
 import { buildHints } from '../lib/explanation';
 import styles from '../styles/QuizPlayer.module.css';
 
@@ -142,13 +143,15 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   };
 
   if (finished) {
+    const perfect = questions.length > 0 && score === questions.length;
     return (
       <div className={styles.quizContainer}>
+        {perfect && <Confetti />}
         <button onClick={onFinish} className={styles.closeBtn} aria-label="Close quiz">
           &times;
         </button>
         <span className={styles.eyebrow}>Quiz Complete</span>
-        <div className={styles.scoreRow}>
+        <div className={`${styles.scoreRow} ${perfect ? styles.scoreRowPerfect : ''}`}>
           <span className={styles.scoreValue}>{score}</span>
           <span className={styles.scoreDivider}>/</span>
           <span className={styles.scoreTotal}>{questions.length}</span>
@@ -161,7 +164,10 @@ export default function QuizPlayer({ questions = [], onFinish }) {
         </p>
 
         {missed.length === 0 ? (
-          <p className={styles.perfectNote}>Every question correct. Nice work.</p>
+          <p className={styles.perfectNote}>
+            <span className={styles.perfectBadge}>Perfect score</span>
+            Every question correct. Nice work.
+          </p>
         ) : (
           <div className={styles.reviewSection}>
             <span className={styles.eyebrow}>Review Your Misses</span>
