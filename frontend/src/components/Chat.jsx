@@ -18,98 +18,110 @@ export default function Chat() {
     }
     setSessionId(sid);
   }, []);
-  const [messages, setMessages] = useState([
-    { sender: 'bot',     text: 'Hi there! How can I help you today?', questions: [] }
+  // Messages carry a stable key of their own. Array indices can't be used:
+  // loading history replaces the whole list, and AnimatePresence would then
+  // match new bubbles to old ones and animate/render the wrong entries.
+  const nextKey = useRef(0);
+  const withKeys = (list) => list.map(m => ({ ...m, key: m.key ?? `m${nextKey.current++}` }));
+
+  const greeting = () => withKeys([
+    { sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }
   ]);
+
+  const [messages, setMessages] = useState(greeting);
   const [input, setInput]                 = useState('');
   const [loading, setLoading]             = useState(false);
-  const [activeQuizMsgIdx, setActiveQuizMsgIdx] = useState(null);
+  // Tracked by message key, not array index: the index would silently point at
+  // a different message if the list were replaced while the quiz is open.
+  const [activeQuizKey, setActiveQuizKey] = useState(null);
+  const activeQuiz = messages.find(m => m.key === activeQuizKey) || null;
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, loading, activeQuizMsgIdx]);
+  }, [messages, loading, activeQuizKey]);
+
   useEffect(() => {
     if (!sessionId) return;
-     fetch(`${apiBase}/api/history/${sessionId}`)
-       .then(res => res.json())
-       .then(data => {
-         if (Array.isArray(data) && data.length > 0) {
-         setMessages(data);
-       } else {
-         // no prior history → show default greeting
-         setMessages([
-           { sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }
-         ]);
-       }
-     })
-     .catch(err => {
-       console.error('Failed to load history:', err);
-       setMessages([
-         { sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }
-       ]);
-       });
-  }, [sessionId]);    
+    fetch(`${apiBase}/api/history/${sessionId}`)
+      .then(res => (res.ok ? res.json() : []))
+      .then(data => {
+        setMessages(Array.isArray(data) && data.length > 0 ? withKeys(data) : greeting());
+      })
+      .catch(err => {
+        console.error('Failed to load history:', err);
+        setMessages(greeting());
+      });
+  }, [sessionId]);
   const sendMessage = async (override = null) => {
+    // Guard here as well as on the buttons: pressing Enter would otherwise
+    // fire concurrent requests that race each other into the message list.
+    if (loading) return;
     const text = override ?? input.trim();
     if (!text) return;
 
-    // 1) student bubble
-    setMessages(ms => [...ms, { sender: 'student', text, questions: [] }]);
+    setMessages(ms => [
+      ...ms,
+      ...withKeys([{ sender: 'student', text, questions: [] }]),
+      { id: 'typing', key: 'typing', sender: 'bot', typing: true },
+    ]);
     setInput('');
     setLoading(true);
 
-    // 2) typing indicator
-    setMessages(ms => [...ms, { id: 'typing', sender: 'bot', typing: true }]);
+    const replaceTyping = (bubble) =>
+      setMessages(ms => [...ms.filter(m => m.id !== 'typing'), ...withKeys([bubble])]);
 
     try {
-      const res  = await fetch(`${apiBase}/api/query`, {
+      const res = await fetch(`${apiBase}/api/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: text, session_id: sessionId }),
       });
-      const data = await res.json();
 
-      // remove typing indicator & add real bot bubble
-      setMessages(ms => {
-        const withoutTyping = ms.filter(m => m.id !== 'typing');
-        return [
-          ...withoutTyping,
-          {
-            sender: 'bot',
-            text: data.response,
-            questions: data.questions || []
-          }
-        ];
-      });
-    } catch {
-      setMessages(ms => {
-        const withoutTyping = ms.filter(m => m.id !== 'typing');
-        return [
-          ...withoutTyping,
-          { sender: 'bot', text: '❌ Error retrieving questions.', questions: [] }
-        ];
+      // A non-2xx response still carries JSON, but with `error` instead of
+      // `response`. Without this check the bot bubble renders as undefined --
+      // a blank message that gives the student no idea anything went wrong.
+      if (!res.ok) {
+        let detail = `The server returned an error (${res.status}).`;
+        try {
+          const body = await res.json();
+          if (body?.error) detail = body.error;
+        } catch { /* response wasn't JSON */ }
+        replaceTyping({ sender: 'bot', text: `⚠️ ${detail} Please try again.`, questions: [], failedQuery: text });
+        return;
+      }
+
+      const data = await res.json();
+      if (!data?.response) {
+        replaceTyping({ sender: 'bot', text: '⚠️ Got an empty reply from the server. Please try again.', questions: [], failedQuery: text });
+        return;
+      }
+
+      replaceTyping({ sender: 'bot', text: data.response, questions: data.questions || [] });
+    } catch (err) {
+      console.error('Query failed:', err);
+      replaceTyping({
+        sender: 'bot',
+        text: "⚠️ Couldn't reach the server. Check your connection and try again.",
+        questions: [],
+        failedQuery: text,
       });
     } finally {
       setLoading(false);
     }
   };
   const handleClearHistory = () => {
-    // 1) clear local UI state
-    setMessages([{ sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }]);
-    setActiveQuizMsgIdx(null);
-  
-    // 2) reset your session in localStorage
-    localStorage.removeItem('regentsSessionId');
-  
-    // 3) optionally tell the backend to delete session
+    setMessages(greeting());
+    setActiveQuizKey(null);
+
+    // Tell the backend to drop the old session, then move to a fresh id.
+    // Fire-and-forget is fine -- the new id is what everything uses from here.
     fetch(`${apiBase}/api/end_session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ session_id: sessionId })
-    });
-  
-    // 4) generate a new sessionId
+    }).catch(err => console.error('Failed to end session:', err));
+
     const newSid = uuidv4();
     localStorage.setItem('regentsSessionId', newSid);
     setSessionId(newSid);
@@ -131,7 +143,7 @@ export default function Chat() {
 
       <div className={styles.chatWindow}>
         <AnimatePresence initial={false}>
-          {messages.map((msg, idx) => (
+          {messages.map((msg) => (
             msg.typing ? (
               <motion.div
                 key="typing"
@@ -144,28 +156,38 @@ export default function Chat() {
               </motion.div>
             ) : (
               <motion.div
-                key={idx}
+                key={msg.key}
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.2 }}
               >
-                      <MessageBubble sender={msg.sender}>
-                        {msg.sender === 'bot' ? (
-                          <div dangerouslySetInnerHTML={{ __html: msg.text }} />
-                        ) : (
-                          <span>{msg.text}</span>
-                        )}
+                <MessageBubble sender={msg.sender}>
+                  {msg.sender === 'bot' ? (
+                    <div dangerouslySetInnerHTML={{ __html: msg.text }} />
+                  ) : (
+                    <span>{msg.text}</span>
+                  )}
 
-                        {msg.sender === 'bot' && msg.questions?.length > 0 && (
-                          <button
-                            className={styles.quizButton}
-                            onClick={() => setActiveQuizMsgIdx(idx)}
-                          >
-                            ▶️ Take Interactive Quiz
-                          </button>
-                        )}
-                      </MessageBubble>
+                  {msg.sender === 'bot' && msg.questions?.length > 0 && (
+                    <button
+                      className={styles.quizButton}
+                      onClick={() => setActiveQuizKey(msg.key)}
+                    >
+                      ▶️ Take Interactive Quiz
+                    </button>
+                  )}
+
+                  {msg.failedQuery && (
+                    <button
+                      className={styles.quizButton}
+                      onClick={() => sendMessage(msg.failedQuery)}
+                      disabled={loading}
+                    >
+                      ↻ Try again
+                    </button>
+                  )}
+                </MessageBubble>
               </motion.div>
             )
           ))}
@@ -175,15 +197,15 @@ export default function Chat() {
       </div>
 
       {/* Quiz overlay */}
-      {activeQuizMsgIdx !== null && (
+      {activeQuiz && (
         <QuizPlayer
-          questions={messages[activeQuizMsgIdx].questions}
-          onFinish={() => setActiveQuizMsgIdx(null)}
+          questions={activeQuiz.questions}
+          onFinish={() => setActiveQuizKey(null)}
         />
       )}
 
       {/* Input bar */}
-      {activeQuizMsgIdx === null && (
+      {!activeQuiz && (
         <div className={styles.inputBar}>
           <input
             type="text"
