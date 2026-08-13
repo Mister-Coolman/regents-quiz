@@ -24,4 +24,7 @@ __pycache__/
 
 # Review artifacts worth regenerating rather than versioning
 /scripts/broken_crops.csv
-/scripts/needs_review.csv/scripts/recrop_backup/
+/scripts/needs_review.csv
+
+# Originals kept when recutting clipped crops
+/scripts/recrop_backup/
