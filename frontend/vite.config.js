@@ -12,20 +12,14 @@ export default defineConfig({
       credentials: true
     },
     proxy: {
-      // Proxy everything under /api to your Flask app
+      // Proxy everything under /api to your local Flask app (routes already include /api)
       '/api': {
-        target: 'http://localhost:5050',
-        changeOrigin: true,
-        rewrite: path => path.replace(/^\/api/, '')
-      },
-      // Download endpoint for PDFs
-      '/download': {
-        target: 'http://localhost:5050',
+        target: 'http://localhost:8080',
         changeOrigin: true
       },
       // Serve your question images
       '/images': {
-        target: 'http://localhost:5050',
+        target: 'http://localhost:8080',
         changeOrigin: true
       }
     }

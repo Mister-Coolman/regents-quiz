@@ -43,9 +43,25 @@ def clean_topic(raw_topic: str) -> str:
     return re.sub(r'^\d+[\.\)\:]\s*', '', raw_topic).strip()
 
 
-def parse_query_with_ollama(query_text):
+def parse_query_with_ollama(query_text, last_query=None):
     topic_whitelist_section = build_topic_whitelist_markdown()
-    print(f"[DEBUG] Parsing query with Fireworks: {query_text}")
+    print(f"[DEBUG] Parsing query with Fireworks: {query_text} (last_query={last_query})")
+
+    if last_query and any(last_query.values()):
+        context_section = f"""
+        ### Previous turn's resolved query (for follow-ups only)
+        subject={last_query.get('subject') or '(none)'}, topic={last_query.get('topic') or '(none)'}, \
+type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(none)'}
+
+        If the student's new message is clearly a follow-up to that previous request (e.g. "make it 10",
+        "give me 5 more", "now do CRQs instead", "same topic but harder", "how many of those are there"),
+        carry over any fields the new message doesn't explicitly restate or change. If the new message
+        clearly starts a new, unrelated request (names a different subject/topic, or doesn't relate to
+        the previous one at all), ignore the previous turn entirely and parse it fresh.
+        """
+    else:
+        context_section = ""
+
     prompt = f"""
         You are a precise JSON-only parser for Regents practice questions. Given a student’s raw request, extract exactly these fields and nothing else in a single-line JSON object:
 
@@ -76,6 +92,7 @@ def parse_query_with_ollama(query_text):
 
         ### Subject → Topic Whitelist
         {topic_whitelist_section}
+        {context_section}
 
         ### JSON schema (exactly these keys; no extras)
         {{

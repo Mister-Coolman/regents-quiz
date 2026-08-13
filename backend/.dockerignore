@@ -1,0 +1,15 @@
+# Never bake secrets into the image -- FIREWORKS_API_KEY must come from
+# `fly secrets set`, not from a file copied in by `COPY . .`
+.env
+.env.*
+
+# Build/runtime cruft
+__pycache__/
+*.pyc
+.DS_Store
+output_pdf/
+pdfs/
+
+# Local DB backups (the live regentsqs.db IS shipped in the image -- do not
+# exclude it, the app reads questions from it at runtime)
+*.db.bak-*

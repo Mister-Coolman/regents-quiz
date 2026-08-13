@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "regents-quiz-frontend",
-      "runtimeExecutable": "sh",
-      "runtimeArgs": ["-c", "cd frontend && npm run dev"],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
       "port": 5173
     }
   ]

@@ -10,8 +10,11 @@ export default function MessageBubble({ sender, children }) {
       {sender === 'bot' && (
         <img src="/bot-avatar.png" alt="Bot" className={styles.avatar} />
       )}
-      <div className={`${styles.bubble} ${styles[sender]}`}>
-        {children}
+      <div className={`${styles.bubbleStack} ${styles[sender]}`}>
+        <span className={styles.senderLabel}>{sender === 'bot' ? 'Math Bot' : 'You'}</span>
+        <div className={`${styles.bubble} ${styles[sender]}`}>
+          {children}
+        </div>
       </div>
       {sender === 'student' && (
         <img src="/user-avatar.png" alt="You" className={styles.avatar} />

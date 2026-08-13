@@ -2,3 +2,56 @@
 *, *::before, *::after {
   box-sizing: border-box;
 }
+
+:root {
+  /* Color -- graph-paper / exam-booklet palette */
+  --paper: #EDF1F5;
+  --surface: #FFFFFF;
+  --ink: #17212B;
+  --pencil: #5B6472;
+  --grid-line: #D3DCE6;
+  --regents-blue: #123B6D;
+  --regents-blue-bright: #1E5AA8;
+  --correct: #2E8B4F;
+  --correct-bg: #E7F5EC;
+  --incorrect: #C6483A;
+  --incorrect-bg: #FBEAE8;
+
+  /* Type */
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-serif: 'IBM Plex Serif', Georgia, serif;
+  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
+    var(--paper);
+  background-size: 24px 24px, 24px 24px, 100% 100%;
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-sans);
+  margin: 0;
+}
+
+button, input {
+  font-family: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--regents-blue-bright);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

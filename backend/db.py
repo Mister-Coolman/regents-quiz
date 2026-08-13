@@ -24,16 +24,33 @@ def init_db():
         question_image_path TEXT NOT NULL,
         correct_answer TEXT,
         explanation TEXT,
+        rubric TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
+    existing_question_cols = {row[1] for row in cursor.execute("PRAGMA table_info(questions)")}
+    if "rubric" not in existing_question_cols:
+        cursor.execute("ALTER TABLE questions ADD COLUMN rubric TEXT")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sessions (
         session_id   TEXT PRIMARY KEY,
         started_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_active  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        last_active  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_subject TEXT,
+        last_topic   TEXT,
+        last_type    TEXT,
+        last_limit   INTEGER
     );
     """)
+    existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
+    for col, decl in (
+        ("last_subject", "TEXT"),
+        ("last_topic", "TEXT"),
+        ("last_type", "TEXT"),
+        ("last_limit", "INTEGER"),
+    ):
+        if col not in existing_cols:
+            cursor.execute(f"ALTER TABLE sessions ADD COLUMN {col} {decl}")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS session_messages (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,10 +92,47 @@ def touch_session(sess_id):
     conn.close()
 
 
-def fetch_questions(subject, topic, qtype, limit):
+def get_last_query(sess_id):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT last_subject, last_topic, last_type, last_limit FROM sessions WHERE session_id = ?",
+        (sess_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    subject, topic, qtype, limit = row
+    if not any([subject, topic, qtype, limit]):
+        return None
+    return {"subject": subject or "", "topic": topic or "", "type": qtype or "", "limit": limit or 0}
+
+
+def set_last_query(sess_id, subject, topic, qtype, limit):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "UPDATE sessions SET last_subject = ?, last_topic = ?, last_type = ?, last_limit = ? WHERE session_id = ?",
+        (subject or None, topic or None, qtype or None, limit or None, sess_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def fetch_questions(subject, topic, qtype, limit, sess_id=None):
+    """Randomly select questions, preferring ones not already served in this
+    session. Falls back to repeats (still randomized, but ordered last) once
+    the unseen pool for the given filters is exhausted."""
     conn = get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
+
+    seen_ids = []
+    if sess_id:
+        cur.execute("SELECT DISTINCT question_id FROM session_questions WHERE session_id = ?", (sess_id,))
+        seen_ids = [row[0] for row in cur.fetchall()]
+
     query = "SELECT * FROM questions WHERE 1=1"
     params = []
     if subject:
@@ -90,7 +144,13 @@ def fetch_questions(subject, topic, qtype, limit):
     if qtype:
         query += " AND type = ?"
         params.append(qtype)
-    query += " ORDER BY RANDOM() LIMIT ?"
+
+    if seen_ids:
+        placeholders = ",".join("?" * len(seen_ids))
+        query += f" ORDER BY (id IN ({placeholders})), RANDOM() LIMIT ?"
+        params.extend(seen_ids)
+    else:
+        query += " ORDER BY RANDOM() LIMIT ?"
     params.append(limit)
 
     cur.execute(query, params)

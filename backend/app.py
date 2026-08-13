@@ -27,6 +27,8 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 IMG_DIR = os.path.join(app.static_folder, 'images')
 
+db.init_db()
+
 
 @app.get("/healthz")
 def healthz():
@@ -73,8 +75,12 @@ def query():
         print("[INFO] Help response triggered")
         return help_response()
 
-    intent, subject, topic, qtype, limit = parse_query_with_ollama(user_query)
+    last_query = db.get_last_query(sess_id)
+    intent, subject, topic, qtype, limit = parse_query_with_ollama(user_query, last_query)
     print(f"[DEBUG] Parsed query -> Subject: {subject}, Topic: {clean_topic(topic)}, Type: {qtype}, Limit: {limit}")
+
+    if intent in ("generate", "count_questions") and any([subject, topic, qtype, limit]):
+        db.set_last_query(sess_id, subject, topic, qtype, limit)
 
     if intent == "list_topics":
         if not subject:
@@ -99,7 +105,7 @@ def query():
         print("[WARN] Query parsing returned empty fields")
         return help_response()
 
-    questions = db.fetch_questions(subject, topic, qtype, limit)
+    questions = db.fetch_questions(subject, topic, qtype, limit, sess_id)
     print(f"[DEBUG] Retrieved {len(questions)} questions from DB")
 
     if not questions:
@@ -216,8 +222,6 @@ def serve_frontend(path):
 
 
 if __name__ == '__main__':
-    print("[INFO] Initializing database...")
-    db.init_db()
     print("[INFO] Starting Flask server on http://localhost:8080")
     port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)

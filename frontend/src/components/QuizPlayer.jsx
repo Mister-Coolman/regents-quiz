@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
+import MathText from './MathText';
 import styles from '../styles/QuizPlayer.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+const OPTIONS = [1, 2, 3, 4];
 
 export default function QuizPlayer({ questions = [], onFinish }) {
   // 1) Guard against empty questions
@@ -19,6 +21,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   const [missed, setMissed]         = useState([]);
   const [showAnswer, setShowAnswer] = useState(false);
   const [isCorrect, setIsCorrect]   = useState(false);
+  const [finished, setFinished]     = useState(false);
 
   const current = questions[idx];
   const { subject = '', month = '', year = '' } = current;
@@ -28,7 +31,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
     const correct = String(selected) === String(current.correct_answer);
     setIsCorrect(correct);
     if (correct) setScore(s => s + 1);
-    else setMissed(m => [...m, current.id]);
+    else setMissed(m => [...m, current]);
     setShowAnswer(true);
   };
 
@@ -39,10 +42,54 @@ export default function QuizPlayer({ questions = [], onFinish }) {
     if (idx + 1 < questions.length) {
       setIdx(i => i + 1);
     } else {
-      alert(`Quiz complete! Your score: ${score}/${questions.length}`);
-      onFinish();
+      setFinished(true);
     }
   };
+
+  if (finished) {
+    return (
+      <div className={styles.quizContainer}>
+        <button onClick={onFinish} className={styles.closeBtn} aria-label="Close quiz">
+          &times;
+        </button>
+        <span className={styles.eyebrow}>Quiz Complete</span>
+        <div className={styles.scoreRow}>
+          <span className={styles.scoreValue}>{score}</span>
+          <span className={styles.scoreDivider}>/</span>
+          <span className={styles.scoreTotal}>{questions.length}</span>
+        </div>
+
+        {missed.length === 0 ? (
+          <p className={styles.perfectNote}>Every question, correct. Nice work.</p>
+        ) : (
+          <div className={styles.reviewSection}>
+            <span className={styles.eyebrow}>Review Your Misses</span>
+            {missed.map((q, i) => (
+              <div key={`${q.id}-${i}`} className={styles.reviewCard}>
+                <div className={styles.reviewMeta}>
+                  {q.subject} &middot; {q.topic} &middot; correct answer: {q.correct_answer}
+                </div>
+                {q.explanation ? (
+                  <div className={styles.explanationBox}>
+                    <span className={styles.whyLabel}>Why</span>
+                    <MathText>{q.explanation}</MathText>
+                  </div>
+                ) : (
+                  <p className={styles.explanationPending}>
+                    Explanation not generated yet for this question — check back soon.
+                  </p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <button onClick={onFinish} className={styles.nextBtn}>
+          Close
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.quizContainer}>
@@ -80,18 +127,19 @@ export default function QuizPlayer({ questions = [], onFinish }) {
 
       {!showAnswer ? (
         <>
-          {/* MCQ options 1–4 */}
+          {/* MCQ options 1–4, styled as scantron bubbles */}
           {current.type === 'MCQ' && (
             <div className={styles.options}>
-              {[1, 2, 3, 4].map(num => (
+              {OPTIONS.map(num => (
                 <button
                   key={num}
                   onClick={() => setSel(num)}
-                  className={`${styles.optionBtn} ${
-                    selected === num ? styles.selected : ''
-                  }`}
+                  className={styles.optionBtn}
+                  aria-pressed={selected === num}
                 >
-                  {num}
+                  <span className={`${styles.bubble} ${selected === num ? styles.bubbleFilled : ''}`}>
+                    {num}
+                  </span>
                 </button>
               ))}
             </div>
@@ -104,13 +152,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
               value={selected || ''}
               onChange={e => setSel(e.target.value)}
               placeholder="Type your answer"
-              style={{
-                width: '100%',
-                padding: 8,
-                marginBottom: 16,
-                borderRadius: 4,
-                border: '1px solid #ccc'
-              }}
+              className={styles.freeResponseInput}
             />
           )}
 
@@ -123,17 +165,26 @@ export default function QuizPlayer({ questions = [], onFinish }) {
           </button>
         </>
       ) : (
-        <div style={{ textAlign: 'center' }}>
-          <p style={{ fontSize: '1.1rem', margin: '1rem 0' }}>
+        <div className={styles.feedback}>
+          <p className={isCorrect ? styles.correctMsg : styles.incorrectMsg}>
             {isCorrect ? (
-              <span style={{ color: '#10b981' }}>✅ Correct!</span>
+              <>✅ Correct!</>
             ) : (
-              <span style={{ color: '#ef4444' }}>
-                ❌ Incorrect. The correct answer was{' '}
-                <strong>{current.correct_answer}</strong>.
-              </span>
+              <>❌ Incorrect. The correct answer was <strong>{current.correct_answer}</strong>.</>
             )}
           </p>
+
+          {current.explanation ? (
+            <div className={styles.explanationBox}>
+              <span className={styles.whyLabel}>Why</span>
+              <MathText>{current.explanation}</MathText>
+            </div>
+          ) : (
+            <p className={styles.explanationPending}>
+              Explanation not generated yet for this question — check back soon.
+            </p>
+          )}
+
           <button onClick={handleNext} className={styles.nextBtn}>
             {idx + 1 < questions.length ? 'Next Question' : 'Finish Quiz'}
           </button>

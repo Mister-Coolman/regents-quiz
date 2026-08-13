@@ -14,6 +14,72 @@
   height: 95vh;
 }
 
+/* ---- Masthead ---- */
+.header {
+  flex: 0 0 auto;
+  position: relative;
+  background: var(--regents-blue);
+  color: #fff;
+  border-radius: 10px 10px 0 0;
+  padding: 0.9rem 1.25rem 0.85rem;
+  border-bottom: 3px solid var(--regents-blue-bright);
+}
+
+.eyebrow {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: 0.65rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9FC1E8;
+  margin-bottom: 0.15rem;
+}
+
+.title {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  font-size: 1.35rem;
+  letter-spacing: -0.01em;
+}
+
+.clearHistoryBtn {
+  position: absolute;
+  top: 0.9rem;
+  right: 1.1rem;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.35);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.08);
+  font-size: 1rem;
+  line-height: 1;
+  color: #fff;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity 0.2s ease, background 0.2s ease;
+}
+
+.clearHistoryBtn:hover {
+  opacity: 1;
+  background: rgba(255,255,255,0.18);
+}
+
+/* ---- Chat window ---- */
+.chatWindow {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-radius: 0 0 10px 10px;
+  padding: 1rem;
+  overflow-y: auto;
+  box-shadow: 0 4px 16px rgba(18, 59, 109, 0.08);
+  margin-bottom: 0.5rem;
+  border: 1px solid var(--grid-line);
+  border-top: none;
+}
+
 .messageList {
   flex: 1;
   overflow-y: auto;
@@ -23,48 +89,60 @@
 .messageRow {
   display: flex;
   align-items: flex-start;
-  margin: 0.25rem 0;
+  margin: 0.35rem 0;
 }
 .messageRow.bot     { justify-content: flex-start; }
 .messageRow.student { justify-content: flex-end; }
 
-/* 3) Common bubble base */
+.avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  margin: 0 0.5rem;
+  flex-shrink: 0;
+  border: 1px solid var(--grid-line);
+}
+
+.bubbleStack {
+  display: flex;
+  flex-direction: column;
+  max-width: 75%;
+}
+
+.bubbleStack.student {
+  align-items: flex-end;
+}
+
+.senderLabel {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  margin: 0 0.15rem 0.2rem;
+}
+
+/* ---- Bubbles ---- */
 .bubble {
   position: relative;
-  max-width: 75%;
   padding: 0.75rem 1rem;
   word-break: break-word;
 }
 
-/* 4) Bot bubble */
 .bubble.bot {
-  background: #f1f3f5;
-  color: #000;
-  border-radius: 12px 12px 12px 0;
-}
-.bubble.bot::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  left: -8px;
-  border: 8px solid transparent;
-  border-right-color: #f1f3f5;
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--grid-line);
+  border-left: 3px solid var(--regents-blue-bright);
+  border-radius: 2px 10px 10px 2px;
 }
 
-/* 5) Student bubble */
 .bubble.student {
-  background: #D0E7FF;
-  color: #000;
-  border-radius: 12px 12px 0 12px;
+  background: var(--regents-blue);
+  color: #fff;
+  border-radius: 10px 2px 2px 10px;
 }
-.bubble.student::before {
-  content: "";
-  position: absolute;
-  top: 12px;
-  right: -8px;
-  border: 8px solid transparent;
-  border-left-color: #D0E7FF;
-}
+
 .avatar {
   width: 32px;
   height: 32px;
@@ -73,28 +151,21 @@
   flex-shrink: 0;
 }
 
-.messageRow {
-  display: flex;
-  align-items: flex-start;
-}
-
-.messageRow.student {
-  justify-content: flex-end;
-}
-
 .typing {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 0.5rem 1rem;
-  background: #f0f0f0;
-  border-radius: 16px;
+  padding: 0.6rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--grid-line);
+  border-left: 3px solid var(--regents-blue-bright);
+  border-radius: 2px 10px 10px 2px;
 }
 
 .dot {
-  width: 8px;
-  height: 8px;
-  background: #555;
+  width: 6px;
+  height: 6px;
+  background: var(--pencil);
   border-radius: 50%;
   opacity: 0;
   animation: blink 1s infinite;
@@ -109,108 +180,73 @@
   40% { opacity: 1; }
 }
 
-.header {
-  flex: 0 0 auto;
-  text-align: center;
-  font-size: 1.75rem;
-  margin-bottom: 0.5rem;
-}
-
-.clearHistoryBtn {
-  position: absolute;
-  top: 0.5rem;
-  right: 1rem;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  font-size: 1.2rem;
-  line-height: 1;
-  color: #888;
-  cursor: pointer;
-  opacity: 0.6;
-  transition: opacity 0.2s ease, color 0.2s ease;
-}
-
-.clearHistoryBtn:hover {
-  opacity: 1;
-  color: #333;
-}
-
-.chatWindow {
-  flex: 1 1 auto;
-  display: flex;
-  flex-direction: column;
-  background: #f9f9f9;
-  border-radius: 12px;
-  padding: 1rem;
-  overflow-y: auto;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
-  margin-bottom: 0.5rem;
-}
-
 .quizButton {
-  display: inline-block;
-  margin: 0.75rem auto;
-  padding: 0.5rem 1rem;
-  background: linear-gradient(90deg, #6366f1, #4f46e5);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.75rem auto 0;
+  padding: 0.55rem 1.1rem;
+  background: var(--ink);
   color: #fff;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
   font-weight: 500;
   cursor: pointer;
   transition: background 0.2s;
 }
 .quizButton:hover {
-  background: linear-gradient(90deg, #4f46e5, #4338ca);
+  background: var(--regents-blue);
 }
 
+/* ---- Input bar ---- */
 .inputBar {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  background: #fff;
-  border-top: 1px solid #eee;
+  padding: 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--grid-line);
+  border-radius: 10px;
   position: sticky;
   bottom: 0;
   box-sizing: border-box;
-
-  /* row by default */
   flex-direction: row;
 }
 
-/* Full‑width input */
 .inputBar input {
   flex: 1 1 auto;
   min-width: 0;
   padding: 0.75rem 1rem;
-  border: 1px solid #ddd;
-  border-radius: 9999px;
+  border: 1px solid var(--grid-line);
+  border-radius: 8px;
   box-sizing: border-box;
+  font-family: var(--font-sans);
+  background: var(--paper);
+  color: var(--ink);
   transition: border-color 0.2s;
 }
 
 .inputBar input:focus {
-  border-color: #4f46e5;
+  border-color: var(--regents-blue-bright);
 }
 
-/* Button row: center the two buttons */
 .actions {
   display: flex;
   gap: 0.5rem;
 }
 
-/* Send button */
 .sendBtn {
-  flex: 0 0 auto;      /* don’t stretch */
-  background: #4f46e5;
+  flex: 0 0 auto;
+  background: var(--regents-blue);
   color: #fff;
   border: none;
   padding: 0.75rem 1.25rem;
   border-radius: 8px;
   font-size: 1rem;
+  font-weight: 500;
   cursor: pointer;
   transition: background 0.2s;
 }
@@ -219,23 +255,23 @@
   cursor: default;
 }
 .sendBtn:not(:disabled):hover {
-  background: #4338ca;
+  background: var(--regents-blue-bright);
 }
 
-/* Help button */
 .helpBtn {
   flex: 0 0 auto;
-  background: #ef4444;
-  color: #fff;
-  border: none;
+  background: transparent;
+  color: var(--pencil);
+  border: 1px solid var(--grid-line);
   padding: 0.75rem;
   border-radius: 8px;
   font-size: 1rem;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 .helpBtn:hover {
-  background: #dc2626;
+  border-color: var(--regents-blue-bright);
+  color: var(--regents-blue-bright);
 }
 
 /* Responsive Breakpoints */
@@ -245,8 +281,8 @@
     padding: 1rem;
     height: 100vh;
   }
-  .header {
-    font-size: 1.5rem;
+  .title {
+    font-size: 1.15rem;
   }
   .chatWindow {
     height: 70vh;
@@ -256,39 +292,40 @@
 @media (max-width: 600px) {
   .container {
     margin: 0 auto;
-
-    /* symmetric padding + safe‑area fallback */
     padding-top: 1rem;
     padding-bottom: env(safe-area-inset-bottom, 1rem);
     padding-left:  env(safe-area-inset-left, 1rem);
     padding-right: env(safe-area-inset-right, 1rem);
-    height: 83vh;       /* let content dictate height */
+    height: 83vh;
     padding: 0;
   }
-  .header {
-    font-size: 1.25rem;
+  .title {
+    font-size: 1.05rem;
   }
 
   .chatWindow {
-    flex: 1 1 auto;     /* allow growing/shrinking */
+    flex: 1 1 auto;
     padding: 0.75rem;
-    margin-bottom: 0.5rem; /* keep a little gap above inputBar */
-    min-height: 0;      /* ensures correct flex behavior */
+    margin-bottom: 0.5rem;
+    min-height: 0;
+    border-radius: 0;
   }
 
-  /* Stack input and buttons with consistent gutters */
+  .header {
+    border-radius: 0;
+  }
+
   .inputBar {
     flex-direction: column;
     padding: 0.5rem;
     gap: 0.5rem;
+    border-radius: 0;
   }
 
-  /* Full‑width input */
   .inputBar input {
     width: 100%;
   }
 
-  /* Button row: make each button flex equally */
   .actions {
     display: flex;
     gap: 0.5rem;
@@ -298,7 +335,7 @@
 
   .sendBtn,
   .helpBtn {
-    flex: 1;            /* each takes 50% minus gap */
-    width: auto;        /* remove any fixed widths */
+    flex: 1;
+    width: auto;
   }
 }
