@@ -159,6 +159,21 @@ def fetch_questions(subject, topic, qtype, limit, sess_id=None):
     return [dict(row) for row in rows]
 
 
+def fetch_questions_by_ids(ids):
+    """Look up specific questions, preserving the order of `ids`. Used to
+    rebuild a PDF on demand from the ids carried in its download link."""
+    if not ids:
+        return []
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    placeholders = ",".join("?" * len(ids))
+    cur.execute(f"SELECT * FROM questions WHERE id IN ({placeholders})", ids)
+    by_id = {row["id"]: dict(row) for row in cur.fetchall()}
+    conn.close()
+    return [by_id[i] for i in ids if i in by_id]
+
+
 def list_topics(subject):
     conn = get_conn()
     cur = conn.cursor()

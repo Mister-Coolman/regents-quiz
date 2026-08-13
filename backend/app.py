@@ -1,8 +1,8 @@
 # Flask backend (query interface + SQLite + PDF generation + LLM parser)
 print("✅ Starting app.py — deployed version")
 
+import io
 import os
-import uuid
 
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory, url_for
@@ -13,7 +13,7 @@ load_dotenv()
 
 import db
 from llm_client import parse_query_with_ollama, clean_topic
-from pdf_utils import generate_pdf, OUTPUT_PDF_DIR
+from pdf_utils import generate_pdf
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 
@@ -26,6 +26,9 @@ CORS(app, resources={r"/api/*": {"origins": [
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 IMG_DIR = os.path.join(app.static_folder, 'images')
+
+# Guards the download endpoint against absurdly long id lists.
+MAX_PDF_QUESTIONS = 50
 
 db.init_db()
 
@@ -112,11 +115,10 @@ def query():
         print("[WARN] No questions found for given criteria.")
         return jsonify({"response": "No questions found for your query. Try being more specific, like '5 Algebra I MCQs on exponents'."})
 
-    unique_filename = f"questions_{uuid.uuid4().hex}.pdf"
-    pdf_path = generate_pdf(questions, unique_filename)
-    print(f"[INFO] PDF generated at {pdf_path}")
-
-    download_url = url_for('download', file=unique_filename, _external=True)
+    # The link carries the question ids rather than a generated filename, so the
+    # PDF is rebuilt on demand at download time. Nothing is stored on disk, and
+    # the link keeps working across restarts and redeploys.
+    download_url = url_for('download', ids=",".join(str(q["id"]) for q in questions), _external=True)
     print(f"[INFO] Download URL: {download_url}")
 
     label = topic or subject
@@ -176,25 +178,34 @@ def serve_images(filename):
 
 @app.route('/api/download', methods=['GET'])
 def download():
-    filename = request.args.get('file', '').strip()
-    if not filename:
-        return jsonify({"error": "missing ?file=<filename>.pdf"}), 400
+    """Rebuild the PDF from the question ids in the link.
 
-    # Security: prevent path traversal
-    safe_name = os.path.basename(filename)
-    if safe_name != filename:
-        return jsonify({"error": "invalid filename"}), 400
+    Ids are plain integers looked up in the questions table, so there is no
+    filesystem path to traverse and no stored file to go missing.
+    """
+    raw = request.args.get('ids', '').strip()
+    if not raw:
+        return jsonify({"error": "missing ?ids=<comma-separated question ids>"}), 400
 
-    abs_path = os.path.join(OUTPUT_PDF_DIR, safe_name)
-    if not os.path.exists(abs_path):
-        return jsonify({"error": "file not found"}), 404
+    try:
+        ids = [int(part) for part in raw.split(",") if part.strip()]
+    except ValueError:
+        return jsonify({"error": "ids must be integers"}), 400
 
+    if not ids or len(ids) > MAX_PDF_QUESTIONS:
+        return jsonify({"error": f"between 1 and {MAX_PDF_QUESTIONS} ids required"}), 400
+
+    questions = db.fetch_questions_by_ids(ids)
+    if not questions:
+        return jsonify({"error": "no matching questions"}), 404
+
+    pdf_bytes = generate_pdf(questions)
     return send_file(
-        abs_path,
+        io.BytesIO(pdf_bytes),
         as_attachment=False,
-        download_name=safe_name,
+        download_name="regents_questions.pdf",
         mimetype="application/pdf",
-        max_age=3600
+        max_age=3600,
     )
 
 

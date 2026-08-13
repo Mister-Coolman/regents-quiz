@@ -2,7 +2,6 @@ node_modules/
 dist/
 /backend/regentsqs.db
 /backend/pdfs
-/backend/output_pdf
 /pdfs
 *.pyc
 __pycache__/
