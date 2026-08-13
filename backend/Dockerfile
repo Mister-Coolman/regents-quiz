@@ -18,7 +18,16 @@ RUN pip install --upgrade pip \
  && pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir gunicorn
 
-# Now copy the rest of the code
+# Question images (~148 MB) change only when the extraction pipeline is re-run,
+# so give them their own layer BEFORE the app code. A code-only deploy then
+# reuses this cached layer instead of rebuilding and re-pushing 148 MB.
+COPY static/ ./static/
+
+# Question database -- changes when explanations are regenerated, which is
+# far less often than code, so it also gets its own layer.
+COPY regentsqs.db ./
+
+# Application code last: this is what actually changes between deploys.
 COPY . .
 
 # (Optional) If you serve any static assets, ensure readable perms
