@@ -6,6 +6,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_DIR = os.path.join(BASE_DIR, "static")
 OUTPUT_PDF_DIR = os.path.abspath(os.path.join(BASE_DIR, "output_pdf"))
 
+# Created at import rather than assumed to exist: the directory holds only
+# generated PDFs, so it is excluded from the Docker image (and git can't track
+# an empty dir), which would otherwise make every PDF write fail in production.
+os.makedirs(OUTPUT_PDF_DIR, exist_ok=True)
+
 
 def generate_pdf(questions, filename):
     pdf = FPDF()
