@@ -102,7 +102,13 @@ common source of error -- omit the number instead of guessing it.
 A shorter explanation that is entirely correct is much better than a fuller one containing a \
 wrong value.
 
-Use $...$ for inline math and $$...$$ for block equations. Keep the whole response under 220 words."""
+Use $...$ for inline math and $$...$$ for block equations.
+
+Write any literal money amount with an escaped dollar sign -- \\$12.50, not $12.50 -- whether it \
+appears in ordinary prose or inside a formula. An unescaped $ is read as a math delimiter, so a \
+raw price silently turns the text after it into math.
+
+Keep the whole response under 220 words."""
 
 CONSTRUCTION_GUIDANCE = """
 This is a compass-and-straightedge CONSTRUCTION question. Be especially careful:
