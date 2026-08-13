@@ -24,8 +24,11 @@ export default function Chat() {
   const nextKey = useRef(0);
   const withKeys = (list) => list.map(m => ({ ...m, key: m.key ?? `m${nextKey.current++}` }));
 
-  const greeting = () => withKeys([
-    { sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }
+  // Fixed key: clearing history sets the greeting, then the history effect sets
+  // it again. With a freshly minted key each time React would unmount and
+  // remount the bubble, and framer-motion strands the orphaned node.
+  const greeting = () => ([
+    { key: 'greeting', sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }
   ]);
 
   const [messages, setMessages] = useState(greeting);
@@ -43,15 +46,24 @@ export default function Chat() {
 
   useEffect(() => {
     if (!sessionId) return;
+    // Clearing history swaps in a new session id while the previous session's
+    // request may still be in flight. Without this guard that stale response
+    // lands last and restores the messages the student just cleared.
+    let cancelled = false;
+
     fetch(`${apiBase}/api/history/${sessionId}`)
       .then(res => (res.ok ? res.json() : []))
       .then(data => {
+        if (cancelled) return;
         setMessages(Array.isArray(data) && data.length > 0 ? withKeys(data) : greeting());
       })
       .catch(err => {
+        if (cancelled) return;
         console.error('Failed to load history:', err);
         setMessages(greeting());
       });
+
+    return () => { cancelled = true; };
   }, [sessionId]);
   const sendMessage = async (override = null) => {
     // Guard here as well as on the buttons: pressing Enter would otherwise
@@ -141,7 +153,11 @@ export default function Chat() {
         </button>
       </div>
 
-      <div className={styles.chatWindow}>
+      {/* Keyed by session so clearing history discards the whole subtree.
+          Replacing the list wholesale otherwise leaves framer-motion holding
+          exited nodes that never unmount -- invisible, but still taking up
+          layout space in the scroll area. */}
+      <div className={styles.chatWindow} key={sessionId}>
         <AnimatePresence initial={false}>
           {messages.map((msg) => (
             msg.typing ? (

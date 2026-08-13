@@ -3,6 +3,8 @@ print("✅ Starting app.py — deployed version")
 
 import io
 import os
+import re
+from html import escape
 
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory, url_for
@@ -64,6 +66,55 @@ def help_response():
     return jsonify({"response": help_text})
 
 
+# A count the model wrote next to a question word, e.g. "here are 5 questions".
+CLAIMED_COUNT_RE = re.compile(
+    r"\b(\d{1,3})\s+(?:\w+[- ]){0,3}(?:question|questions|problem|problems|mcqs?|crqs?)\b",
+    re.IGNORECASE,
+)
+
+
+def safe_reply(reply, actual_count):
+    """Drop the model's reply if it claims a question count that contradicts
+    what was actually retrieved.
+
+    The prompt tells it never to state a count -- it doesn't know one at parse
+    time -- but it does so intermittently, usually echoing the number the
+    student asked for. That's wrong whenever the database holds fewer.
+    """
+    if not reply:
+        return ""
+    for match in CLAIMED_COUNT_RE.finditer(reply):
+        if int(match.group(1)) != actual_count:
+            print(f"[WARN] reply claimed {match.group(1)} questions but {actual_count} were found; dropping reply")
+            return ""
+    return reply
+
+
+def no_results_message(subject, topic, qtype):
+    """Explain an empty result by saying what IS available, rather than just
+    telling the student to be more specific."""
+    asked = " ".join(p for p in (subject, topic, qtype) if p) or "that"
+
+    # Relaxing the question type is the most common near-miss: plenty of topics
+    # have MCQs but no constructed-response questions, or vice versa.
+    if qtype:
+        other = db.count_questions(subject, topic, "")
+        if other:
+            return (f"I don't have any {escape(qtype)} questions for {escape(topic or subject)}, "
+                    f"but there are <b>{other}</b> of other types — try asking without the "
+                    f"{escape(qtype)} filter.")
+
+    if topic:
+        broader = db.count_questions(subject, "", qtype)
+        if broader:
+            where = escape(subject) if subject else "that subject"
+            return (f"Nothing stored for {escape(topic)} yet. There are <b>{broader}</b> questions "
+                    f"in {where} overall — want a different topic? Ask me to list topics.")
+
+    return (f"I couldn't find questions for {escape(asked)}. Try naming a subject and topic, "
+            f"like '5 Algebra I MCQs on exponents', or ask me to list topics.")
+
+
 @app.route('/api/query', methods=['POST'])
 def query():
     data = request.json
@@ -79,30 +130,34 @@ def query():
         return help_response()
 
     last_query = db.get_last_query(sess_id)
-    intent, subject, topic, qtype, limit = parse_query_with_ollama(user_query, last_query)
+    intent, subject, topic, qtype, limit, reply = parse_query_with_ollama(user_query, last_query)
     print(f"[DEBUG] Parsed query -> Subject: {subject}, Topic: {clean_topic(topic)}, Type: {qtype}, Limit: {limit}")
 
     if intent in ("generate", "count_questions") and any([subject, topic, qtype, limit]):
         db.set_last_query(sess_id, subject, topic, qtype, limit)
 
+    # The model writes the conversational voice; every fact below is templated
+    # from real query results, so a reply can never assert a wrong count.
+    lead = f"{escape(reply)}<br><br>" if reply else ""
+
+    if intent == "chitchat":
+        return jsonify({"response": escape(reply) if reply else help_response().get_json()["response"]})
+
     if intent == "list_topics":
         if not subject:
-            return jsonify({"response": "No topics found for that subject.<br>Try something like 'List topics for Algebra I'"})
+            return jsonify({"response": "I can list topics for Algebra I, Algebra II, or Geometry — which one?"})
         topics = db.list_topics(subject)
         if topics:
-            title = f"Available topics for <b>{subject}</b>:" if subject else "Available topics:"
-            items = "".join(f"<li>{t}</li>" for t in topics)
-            bot_resp = f"{title}<ul style='margin-top:0.5rem'>{items}</ul>"
-            return jsonify({"response": bot_resp})
-        else:
-            return jsonify({"response": "No topics found for that subject."})
+            title = lead or f"Available topics for <b>{subject}</b>:<br>"
+            items = "".join(f"<li>{escape(t)}</li>" for t in topics)
+            return jsonify({"response": f"{title}<ul style='margin-top:0.5rem'>{items}</ul>"})
+        return jsonify({"response": f"I don't have any topics stored for {escape(subject)} yet."})
 
     if intent == "count_questions":
         cnt = db.count_questions(subject, topic, qtype)
         parts = [p for p in (subject, topic, qtype) if p]
-        label = " ".join(parts) or "all questions"
-        bot_resp = f"There are {cnt} {label} in the database."
-        return jsonify({"response": bot_resp})
+        label = " ".join(parts) or "questions"
+        return jsonify({"response": f"{lead}There are <b>{cnt}</b> {escape(label)} in the database."})
 
     if not any([subject, topic, qtype]):
         print("[WARN] Query parsing returned empty fields")
@@ -113,7 +168,7 @@ def query():
 
     if not questions:
         print("[WARN] No questions found for given criteria.")
-        return jsonify({"response": "No questions found for your query. Try being more specific, like '5 Algebra I MCQs on exponents'."})
+        return jsonify({"response": no_results_message(subject, topic, qtype)})
 
     # The link carries the question ids rather than a generated filename, so the
     # PDF is rebuilt on demand at download time. Nothing is stored on disk, and
@@ -123,10 +178,18 @@ def query():
 
     label = topic or subject
     type_part = f"{qtype} " if qtype else ""
-    topic_part = f" on '{label}'" if label else ""
-    summary = f"Here are {len(questions)} {type_part}questions{topic_part}:"
+    topic_part = f" on '{escape(label)}'" if label else ""
     pdf_link = f"<a href='{download_url}' target='_blank'>📄 Click here to view/download the PDF</a>"
-    bot_resp = f"{summary}<br><br>{pdf_link}"
+
+    opener = safe_reply(reply, len(questions))
+    if opener:
+        # The opener carries the voice, so the facts collapse to a compact line
+        # rather than repeating the same sentence back at the student.
+        facts = f"{len(questions)} {type_part}question{'s' if len(questions) != 1 else ''}{topic_part}"
+        bot_resp = f"{escape(opener)}<br><br>{facts} &middot; {pdf_link}"
+    else:
+        summary = f"Here are {len(questions)} {type_part}questions{topic_part}:"
+        bot_resp = f"{summary}<br><br>{pdf_link}"
 
     db.save_exchange(sess_id, user_query, bot_resp, questions)
 
