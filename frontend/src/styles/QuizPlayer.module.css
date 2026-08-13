@@ -134,6 +134,93 @@
   background: var(--regents-blue);
 }
 
+/* ---- Progressive hints ---- */
+.hintArea {
+  margin-top: 1rem;
+  border-top: 1px dashed var(--grid-line);
+  padding-top: 0.9rem;
+}
+
+.hint {
+  background: var(--paper);
+  border-left: 3px solid var(--pencil);
+  border-radius: 2px 8px 8px 2px;
+  padding: 0.7rem 0.9rem;
+  margin-bottom: 0.6rem;
+}
+
+.hint p {
+  font-family: var(--font-serif);
+  line-height: 1.55;
+  margin: 0.3rem 0 0;
+}
+
+.hintLabel {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--pencil);
+  font-weight: 600;
+}
+
+.hintBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: transparent;
+  border: 1px dashed var(--grid-line);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--pencil);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.hintBtn:hover {
+  border-color: var(--regents-blue-bright);
+  color: var(--regents-blue-bright);
+  border-style: solid;
+}
+
+.hintCount {
+  font-size: 0.66rem;
+  opacity: 0.75;
+}
+
+.hintExhausted {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--pencil);
+  margin: 0.2rem 0 0;
+}
+
+/* ---- Explanation disclosure ---- */
+.disclosure {
+  margin-bottom: 1rem;
+}
+
+.disclosureToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  background: transparent;
+  border: none;
+  padding: 0.35rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--regents-blue-bright);
+  cursor: pointer;
+}
+.disclosureToggle:hover { text-decoration: underline; }
+
+.caret {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+.caret[data-open="true"] { transform: rotate(90deg); }
+
 /* ---- Feedback + explanation ---- */
 .feedback {
   text-align: left;

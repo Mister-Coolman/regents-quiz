@@ -1,9 +1,40 @@
 import React, { useState } from 'react';
 import MathText from './MathText';
+import { buildHints } from '../lib/explanation';
 import styles from '../styles/QuizPlayer.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
 const OPTIONS = [1, 2, 3, 4];
+
+/** Full explanation behind a disclosure, so the answer isn't dumped on sight. */
+function ExplanationPanel({ text, defaultOpen = false }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!text) {
+    return (
+      <p className={styles.explanationPending}>
+        Explanation not available for this question yet.
+      </p>
+    );
+  }
+  return (
+    <div className={styles.disclosure}>
+      <button
+        type="button"
+        className={styles.disclosureToggle}
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+      >
+        <span className={styles.caret} data-open={open}>▸</span>
+        {open ? 'Hide explanation' : 'Show explanation'}
+      </button>
+      {open && (
+        <div className={styles.explanationBox}>
+          <MathText>{text}</MathText>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function QuizPlayer({ questions = [], onFinish }) {
   // 1) Guard against empty questions
@@ -22,9 +53,15 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   const [showAnswer, setShowAnswer] = useState(false);
   const [isCorrect, setIsCorrect]   = useState(false);
   const [finished, setFinished]     = useState(false);
+  // How many hints the student has unlocked on the current question.
+  const [hintLevel, setHintLevel]   = useState(0);
 
   const current = questions[idx];
   const { subject = '', month = '', year = '' } = current;
+
+  const hints = buildHints(current.explanation);
+  const shownHints = hints.slice(0, hintLevel);
+  const hintsLeft = hints.length - hintLevel;
 
   // Check user's answer
   const handleCheck = () => {
@@ -39,6 +76,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   const handleNext = () => {
     setShowAnswer(false);
     setSel(null);
+    setHintLevel(0);
     if (idx + 1 < questions.length) {
       setIdx(i => i + 1);
     } else {
@@ -69,16 +107,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
                 <div className={styles.reviewMeta}>
                   {q.subject} &middot; {q.topic} &middot; correct answer: {q.correct_answer}
                 </div>
-                {q.explanation ? (
-                  <div className={styles.explanationBox}>
-                    <span className={styles.whyLabel}>Why</span>
-                    <MathText>{q.explanation}</MathText>
-                  </div>
-                ) : (
-                  <p className={styles.explanationPending}>
-                    Explanation not generated yet for this question — check back soon.
-                  </p>
-                )}
+                <ExplanationPanel text={q.explanation} />
               </div>
             ))}
           </div>
@@ -163,6 +192,35 @@ export default function QuizPlayer({ questions = [], onFinish }) {
           >
             Check Answer
           </button>
+
+          {/* Hints unlock one at a time while the student is still working:
+              the framing, then the method, then the opening steps -- stopping
+              short of the full solution. */}
+          {hints.length > 0 && (
+            <div className={styles.hintArea}>
+              {shownHints.map((h, i) => (
+                <div key={i} className={styles.hint}>
+                  <span className={styles.hintLabel}>{h.label}</span>
+                  <MathText>{h.body}</MathText>
+                </div>
+              ))}
+
+              {hintsLeft > 0 ? (
+                <button
+                  type="button"
+                  className={styles.hintBtn}
+                  onClick={() => setHintLevel(l => l + 1)}
+                >
+                  💡 {hintLevel === 0 ? 'Need a hint?' : 'Another hint'}
+                  <span className={styles.hintCount}>{hintsLeft} left</span>
+                </button>
+              ) : (
+                <p className={styles.hintExhausted}>
+                  That's every hint — give it a go, then check your answer.
+                </p>
+              )}
+            </div>
+          )}
         </>
       ) : (
         <div className={styles.feedback}>
@@ -174,16 +232,10 @@ export default function QuizPlayer({ questions = [], onFinish }) {
             )}
           </p>
 
-          {current.explanation ? (
-            <div className={styles.explanationBox}>
-              <span className={styles.whyLabel}>Why</span>
-              <MathText>{current.explanation}</MathText>
-            </div>
-          ) : (
-            <p className={styles.explanationPending}>
-              Explanation not generated yet for this question — check back soon.
-            </p>
-          )}
+          {/* Opened by default when they got it wrong -- that's the moment the
+              explanation is worth reading -- and collapsed when they got it
+              right, so a correct answer isn't buried under a wall of text. */}
+          <ExplanationPanel text={current.explanation} defaultOpen={!isCorrect} />
 
           <button onClick={handleNext} className={styles.nextBtn}>
             {idx + 1 < questions.length ? 'Next Question' : 'Finish Quiz'}
