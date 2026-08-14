@@ -1,0 +1,14 @@
+# The frontend is a Node/npm project — package.json + package-lock.json is the
+# real dependency manifest; run `npm install` in frontend/ to install everything.
+# This file is a human-readable mirror of package.json's "dependencies" for
+# anyone scanning the repo who expects a requirements.txt, kept in the same
+# format as backend/requirements.txt. If the two ever disagree, package.json wins.
+
+framer-motion==12.23.12
+katex==0.18.4
+react==18.3.1
+react-dom==18.3.1
+react-markdown==10.1.0
+rehype-katex==7.0.1
+remark-math==6.0.0
+uuid==11.1.0
