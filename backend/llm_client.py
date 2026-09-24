@@ -14,7 +14,7 @@ from topics import (
 )
 
 FIREWORKS_URL = "https://api.fireworks.ai/inference/v1/chat/completions"
-FIREWORKS_MODEL = "accounts/fireworks/models/qwen3p7-plus"
+FIREWORKS_MODEL = "accounts/fireworks/models/deepseek-v4p1-flash"
 
 api_key = os.getenv("FIREWORKS_API_KEY")
 if not api_key:
@@ -148,6 +148,7 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
                 "response_format": {"type": "json_object"},
                 "reasoning_effort": "none",
             },
+            timeout=(10, 60),
         )
         response.raise_for_status()
 

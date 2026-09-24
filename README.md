@@ -26,8 +26,8 @@ Live at **https://nystateregentsprep.netlify.app/**
 - Math rendered with KaTeX (via `react-markdown` + `remark-math` +
   `rehype-katex`), so explanations with equations render properly
 - PDF export of a practice set
-- Natural-language query parsing (e.g. "10 easy algebra questions from
-  2019") backed by Fireworks AI, used to build a practice set from a
+- Natural-language query parsing (e.g. "10 Algebra I MCQs on Systems of
+  Equations") backed by Fireworks AI's DeepSeek V4.1 Flash, used to build a practice set from a
   free-text request
 
 ## Architecture
