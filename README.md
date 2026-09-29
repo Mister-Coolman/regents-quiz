@@ -53,7 +53,7 @@ Live at **https://nystateregentsprep.netlify.app/**
     `pdfplumber`, `pandas`) that predates the current PyMuPDF-based
     recropping approach. They're left in the repo for reference but are not
     part of the maintained pipeline and their dependencies are not included
-    in `scripts/requirements.txt` below.
+    in the install command below.
 
 ## Getting started
 
@@ -75,9 +75,9 @@ npm install
 npm run dev
 ```
 
-`frontend/requirements.txt` mirrors `package.json`'s dependencies in
-pip-style format for reference; `package.json` is the actual manifest and
-what `npm install` reads.
+Frontend dependencies live in `frontend/package.json`. There is deliberately no
+`requirements.txt` in `frontend/`: Netlify would treat the folder as a Python
+project and try to `pip install` it.
 
 ### Data pipeline scripts
 
