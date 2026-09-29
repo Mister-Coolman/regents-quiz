@@ -188,6 +188,7 @@ export default function Chat() {
         <main className={styles.main}>
           <QuizPlayer
             questions={activeQuiz.questions}
+            sessionId={sessionId}
             onFinish={() => setActiveQuizKey(null)}
           />
         </main>
@@ -226,7 +227,10 @@ export default function Chat() {
                     <TypingIndicator key="typing" />
                   ) : (
                     <MessageBubble key={msg.key} sender={msg.sender} isError={Boolean(msg.failedQuery)}>
-                      {msg.sender === 'bot' ? (
+                      {/* Only replies from /api/query are HTML (built server-side with
+                          every dynamic value escaped). Errors carry text from wherever
+                          the failure came from, so they are rendered as plain text. */}
+                      {msg.sender === 'bot' && !msg.failedQuery ? (
                         <div className={styles.botHtml} dangerouslySetInnerHTML={{ __html: msg.text }} />
                       ) : (
                         msg.text

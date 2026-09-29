@@ -174,6 +174,23 @@ def fetch_questions_by_ids(ids):
     return [by_id[i] for i in ids if i in by_id]
 
 
+def fetch_served_question(sess_id, question_id):
+    """The full question row, but only if it was served to this session --
+    answers are released for questions a student was actually given."""
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.cursor()
+    cur.execute("""
+      SELECT q.* FROM questions q
+      WHERE q.id = ?
+        AND EXISTS (SELECT 1 FROM session_questions sq
+                    WHERE sq.session_id = ? AND sq.question_id = q.id)
+    """, (question_id, sess_id))
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def list_topics(subject):
     conn = get_conn()
     cur = conn.cursor()

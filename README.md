@@ -34,7 +34,9 @@ Live at **https://nystateregentsprep.netlify.app/**
 
 - **Backend** — Flask + SQLite, deployed on Fly.io. Serves questions,
   explanations, and question images from `regentsqs.db`, and proxies
-  natural-language quiz requests to Fireworks AI for parsing. The database
+  natural-language quiz requests to Fireworks AI for parsing. Answer keys and
+  explanations never ship with the questions: the quiz sends each attempt to
+  `/api/check`, which releases that one question's answer. The database
   is not committed to git — it ships as part of the Docker image on
   `fly deploy`.
 - **Frontend** — React + Vite, deployed on Netlify with auto-deploy on push

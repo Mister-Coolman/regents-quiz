@@ -9,23 +9,63 @@ from html import escape
 from dotenv import load_dotenv
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory, url_for
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
 import db
+from answers import check_answer, public_question
 from llm_client import parse_query_with_ollama, clean_topic
 from pdf_utils import generate_pdf
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 
+# No cookies or auth headers are used, so credentials stay off.
 CORS(app, resources={r"/api/*": {"origins": [
+    "https://nystateregentsprep.netlify.app",
     "http://localhost:5173",
-    "https://*.ngrok-free.app",
-    "https://perfectly-knowing-cow.ngrok-free.app",
-    "https://nystateregentsprep.netlify.app"
-]}}, supports_credentials=True)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+    "http://localhost:5174",
+]}})
+
+# Trust exactly one proxy hop (Fly's edge) for the client IP and scheme. The
+# Host header is deliberately NOT taken from X-Forwarded-Host: it is built into
+# the PDF link, and a forwarded value would let a request choose that link.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+# Every /api/query costs a Fireworks call, so an open endpoint is an open tab on
+# the bill. Per-IP limits in memory: fine for the single gunicorn worker here.
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    storage_uri="memory://",
+    headers_enabled=True,
+)
+
+# A single request can ask for at most this many questions, however the
+# model parses it ("give me 2000 questions" otherwise dumps a subject's bank).
+MAX_QUIZ_QUESTIONS = 20
+MAX_QUERY_CHARS = 500
+# Session ids are client-generated UUIDs; anything else is rejected before it
+# can reach the database or grow a table.
+SESSION_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+
+def valid_session_id(sid):
+    return isinstance(sid, str) and bool(SESSION_ID_RE.match(sid))
+
+
+@app.after_request
+def security_headers(resp):
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return resp
+
+
+@app.errorhandler(429)
+def too_many_requests(e):
+    return jsonify({"error": "Too many requests in a short time. Wait a minute, then try again."}), 429
 
 IMG_DIR = os.path.join(app.static_folder, 'images')
 
@@ -36,6 +76,7 @@ db.init_db()
 
 
 @app.get("/healthz")
+@limiter.exempt
 def healthz():
     return {"status": "alive"}, 200
 
@@ -106,10 +147,16 @@ def no_results_message(subject, topic, qtype):
 
 
 @app.route('/api/query', methods=['POST'])
+@limiter.limit("10 per minute;150 per day")
 def query():
-    data = request.json
-    user_query = data.get("query", "").strip()
+    data = request.get_json(silent=True) or {}
+    user_query = str(data.get("query", "")).strip()
     sess_id = data.get("session_id")
+
+    if not valid_session_id(sess_id):
+        return jsonify({"error": "Missing or invalid session. Reload the page to start a new one."}), 400
+    if len(user_query) > MAX_QUERY_CHARS:
+        return jsonify({"error": f"That request is too long. Keep it under {MAX_QUERY_CHARS} characters."}), 400
 
     db.touch_session(sess_id)
 
@@ -138,7 +185,7 @@ def query():
             return jsonify({"response": "I can list topics for Algebra I, Algebra II or Geometry. Which one?"})
         topics = db.list_topics(subject)
         if topics:
-            title = lead or f"Available topics for <b>{subject}</b>:<br>"
+            title = lead or f"Available topics for <b>{escape(subject)}</b>:<br>"
             items = "".join(f"<li>{escape(t)}</li>" for t in topics)
             return jsonify({"response": f"{title}<ul style='margin-top:0.5rem'>{items}</ul>"})
         return jsonify({"response": f"I don't have any topics stored for {escape(subject)} yet."})
@@ -153,6 +200,7 @@ def query():
         print("[WARN] Query parsing returned empty fields")
         return help_response()
 
+    limit = max(1, min(limit, MAX_QUIZ_QUESTIONS))
     questions = db.fetch_questions(subject, topic, qtype, limit, sess_id)
     print(f"[DEBUG] Retrieved {len(questions)} questions from DB")
 
@@ -169,7 +217,7 @@ def query():
     label = topic or subject
     type_part = f"{qtype} " if qtype else ""
     topic_part = f" on '{escape(label)}'" if label else ""
-    pdf_link = (f"<a href='{download_url}' target='_blank' rel='noopener'>"
+    pdf_link = (f"<a href='{escape(download_url, quote=True)}' target='_blank' rel='noopener'>"
                 f"Open as PDF<span class='sr-only'> (opens in a new tab)</span></a>")
 
     opener = safe_reply(reply, len(questions))
@@ -187,39 +235,32 @@ def query():
     return jsonify({
         "response": bot_resp,
         "pdf_url": download_url,
-        "questions": questions
+        # Answers stay on the server until /api/check.
+        "questions": [public_question(q) for q in questions]
     })
 
 
-@app.route('/debug/image')
-def debug_image():
-    rel = request.args.get('path', '')
-    rel = rel.lstrip('/')
-    if rel.startswith('static/'):
-        rel = rel[len('static/'):]
-    if rel.startswith('images/'):
-        rel = rel[len('images/'):]
-
-    root = os.path.join(app.static_folder or os.path.join(os.path.dirname(__file__), "static"), "images")
-    abs_path = os.path.join(root, rel)
-
-    info = {
-        "cwd": os.getcwd(),
-        "static_folder": app.static_folder,
-        "images_root": root,
-        "requested_rel": rel,
-        "abs_path": abs_path,
-        "images_root_exists": os.path.exists(root),
-        "file_exists": os.path.exists(abs_path),
-        "env_VITE_API_BASE_URL": os.environ.get("VITE_API_BASE_URL"),
-    }
-
+@app.route('/api/check', methods=['POST'])
+@limiter.limit("60 per minute")
+def check():
+    """Grade one attempt and release that question's answer and explanation."""
+    data = request.get_json(silent=True) or {}
+    sess_id = data.get("session_id")
+    answer = data.get("answer")
     try:
-        info["siblings"] = sorted(os.listdir(os.path.dirname(abs_path)))[:50]
-    except Exception as e:
-        info["siblings_error"] = str(e)
+        question_id = int(data.get("question_id"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "question_id must be an integer"}), 400
 
-    return jsonify(info)
+    if not valid_session_id(sess_id):
+        return jsonify({"error": "Missing or invalid session. Reload the page to start a new one."}), 400
+    if answer is None or not str(answer).strip() or len(str(answer)) > 200:
+        return jsonify({"error": "Choose or type an answer first."}), 400
+
+    q = db.fetch_served_question(sess_id, question_id)
+    if not q:
+        return jsonify({"error": "That question isn't part of this chat. Ask for a new set."}), 404
+    return jsonify(check_answer(q, answer))
 
 
 @app.route('/images/<path:filename>')
@@ -231,6 +272,7 @@ def serve_images(filename):
 
 
 @app.route('/api/download', methods=['GET'])
+@limiter.limit("30 per minute")
 def download():
     """Rebuild the PDF from the question ids in the link.
 
@@ -264,14 +306,21 @@ def download():
 
 
 @app.route('/api/history/<session_id>')
+@limiter.limit("60 per minute")
 def history(session_id):
-    return jsonify(db.get_history(session_id))
+    if not valid_session_id(session_id):
+        return jsonify([])
+    rows = db.get_history(session_id)
+    for row in rows:
+        row["questions"] = [public_question(q) for q in row["questions"]]
+    return jsonify(rows)
 
 
 @app.route('/api/end_session', methods=['POST'])
+@limiter.limit("30 per minute")
 def end_session_route():
-    sess_id = request.json.get("session_id")
-    if not sess_id:
+    sess_id = (request.get_json(silent=True) or {}).get("session_id")
+    if not valid_session_id(sess_id):
         return jsonify({"error": "session_id required"}), 400
     db.end_session(sess_id)
     return jsonify({"status": "ok"})
