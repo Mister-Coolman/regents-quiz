@@ -4,48 +4,101 @@
 }
 
 :root {
-  /* Color -- graph-paper / exam-booklet palette */
-  --paper: #EDF1F5;
+  /* Neutrals -- a cool grey ground with white surfaces; depth comes from the
+     contrast between the two, not from shadows. */
+  --ground: #EEF0F2;
   --surface: #FFFFFF;
-  --ink: #17212B;
-  --pencil: #5B6472;
-  --grid-line: #D3DCE6;
-  --regents-blue: #123B6D;
-  --regents-blue-bright: #1E5AA8;
-  --correct: #2E8B4F;
-  --correct-bg: #E7F5EC;
-  --incorrect: #C6483A;
-  --incorrect-bg: #FBEAE8;
+  --surface-sunk: #F5F5F7;
+  --ink: #121317;
+  --ink-2: #5E5E63;          /* 5.6:1 on the ground, 5.9:1 on sunk panels */
+  --hairline: rgba(0, 0, 0, 0.08);
+  --hairline-strong: rgba(0, 0, 0, 0.16);
+  --control-edge: #86868B;   /* 3.2:1 on the ground: the edge of an input must be visible */
+  --link: #0066CC;
 
-  /* Type */
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
-  --font-serif: 'IBM Plex Serif', Georgia, serif;
-  --font-sans: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  /* Subject marks. Kandinsky's Bauhaus pairing: square/red, triangle/yellow,
+     circle/blue. Colour appears only on these marks, never as decoration. */
+  --algebra1: #D8402B;
+  --geometry: #F2B31B;
+  --algebra2: #1F5FBF;
+
+  /* Feedback */
+  --correct: #1E7B34;
+  --incorrect: #C8281E;
+  --incorrect-sunk: #FBEBE9;
+
+  /* Type. System SF for everything readable; Jost (a Futura revival) only for
+     numerals -- question numbers, bubbles, the score dial. */
+  --font-text: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-numeral: "Jost", "Futura", "Century Gothic", sans-serif;
+
+  --radius-lg: 20px;
+  --radius-md: 12px;
+  --ease: cubic-bezier(0.25, 0.1, 0.3, 1);
 }
 
 html, body {
   height: 100%;
 }
 
+/* Keep focused elements clear of the sticky top bar and composer. */
+html {
+  scroll-padding-top: 64px;
+  scroll-padding-bottom: 150px;
+}
+
 body {
-  background:
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px),
-    var(--paper);
-  background-size: 24px 24px, 24px 24px, 100% 100%;
-  background-attachment: fixed;
-  color: var(--ink);
-  font-family: var(--font-sans);
   margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-text);
+  font-size: 17px;
+  line-height: 1.47;
+  letter-spacing: -0.022em;
+  -webkit-font-smoothing: antialiased;
 }
 
 button, input {
-  font-family: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  color: inherit;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* Links that leave the page say so visually; the words are in the markup. */
+a[target="_blank"]::after {
+  content: "\2197" / "";
+  margin-left: 0.2em;
+  font-size: 0.85em;
 }
 
 :focus-visible {
-  outline: 2px solid var(--regents-blue-bright);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--link);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.katex {
+  font-size: 1.05em;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import MathText from './MathText';
 import Confetti from './Confetti';
+import SubjectMark from './SubjectMark';
+import ScoreDial from './ScoreDial';
 import { buildHints } from '../lib/explanation';
 import styles from '../styles/QuizPlayer.module.css';
 
@@ -52,12 +54,13 @@ function ExplanationPanel({ text, defaultOpen = false }) {
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
       >
-        <span className={styles.caret} data-open={open}>▸</span>
         {open ? 'Hide explanation' : 'Show explanation'}
+        <span className={styles.caret} data-open={open} aria-hidden="true">›</span>
       </button>
       {open && (
         <div className={styles.explanationBox}>
           <MathText>{text}</MathText>
+          <p className={styles.aiNote}>Written by AI. The answer key is from the exam.</p>
         </div>
       )}
     </div>
@@ -68,9 +71,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   // 1) Guard against empty questions
   if (!Array.isArray(questions) || questions.length === 0) {
     return (
-      <div style={{ padding: '1rem', textAlign: 'center' }}>
-        <strong>Loading quiz…</strong>
-      </div>
+      <p className={styles.loading}>Loading quiz…</p>
     );
   }
 
@@ -91,6 +92,9 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   const [finished, setFinished]     = useState(saved?.finished ?? false);
   // How many hints the student has unlocked on the current question.
   const [hintLevel, setHintLevel]   = useState(0);
+  // Shown when "Check answer" is pressed before choosing -- the button stays
+  // enabled so it can explain itself instead of sitting greyed out.
+  const [nudge, setNudge]           = useState(false);
   const [hintsUsed, setHintsUsed]   = useState(saved?.hintsUsed ?? 0);
   // Captured once at mount: true only when this run picked up stored progress,
   // rather than simply having advanced past the first question.
@@ -111,6 +115,11 @@ export default function QuizPlayer({ questions = [], onFinish }) {
 
   // Check user's answer
   const handleCheck = () => {
+    if (selected === null || selected === '') {
+      setNudge(true);
+      return;
+    }
+    setNudge(false);
     const correct = String(selected) === String(current.correct_answer);
     setIsCorrect(correct);
     setResults(r => ({ ...r, [current.id]: correct }));
@@ -133,6 +142,7 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   // Next question or finish
   const handleNext = () => {
     setShowAnswer(false);
+    setNudge(false);
     setSel(null);
     setHintLevel(0);
     if (idx + 1 < questions.length) {
@@ -145,177 +155,203 @@ export default function QuizPlayer({ questions = [], onFinish }) {
   if (finished) {
     const perfect = questions.length > 0 && score === questions.length;
     return (
-      <div className={styles.quizContainer}>
+      <div className={styles.quiz}>
         {perfect && <Confetti />}
-        <button onClick={onFinish} className={styles.closeBtn} aria-label="Close quiz">
-          &times;
-        </button>
-        <span className={styles.eyebrow}>Quiz Complete</span>
-        <div className={`${styles.scoreRow} ${perfect ? styles.scoreRowPerfect : ''}`}>
-          <span className={styles.scoreValue}>{score}</span>
-          <span className={styles.scoreDivider}>/</span>
-          <span className={styles.scoreTotal}>{questions.length}</span>
+        <div className={styles.topbar}>
+          <button onClick={onFinish} className={styles.backBtn}>
+            <span aria-hidden="true">‹</span> Chat
+          </button>
         </div>
 
-        <p className={styles.hintsUsedNote}>
-          {hintsUsed === 0
-            ? 'No hints used.'
-            : `${hintsUsed} hint${hintsUsed === 1 ? '' : 's'} used.`}
-        </p>
-
-        {missed.length === 0 ? (
-          <p className={styles.perfectNote}>
-            <span className={styles.perfectBadge}>Perfect score</span>
-            Every question correct. Nice work.
+        <section className={styles.results}>
+          <ScoreDial
+            results={questions.map(q => results[q.id])}
+            score={score}
+            total={questions.length}
+          />
+          <h2 className={styles.resultsHeadline}>
+            {perfect
+              ? 'Every question right.'
+              : `${missed.length} to review.`}
+          </h2>
+          <p className={styles.resultsNote}>
+            {hintsUsed === 0
+              ? 'No hints used.'
+              : `${hintsUsed} hint${hintsUsed === 1 ? '' : 's'} used.`}
           </p>
-        ) : (
-          <div className={styles.reviewSection}>
-            <span className={styles.eyebrow}>Review Your Misses</span>
+          <div className={styles.resultsActions}>
+            <button onClick={onFinish} className={styles.primaryBtn}>
+              Back to chat
+            </button>
+            <button onClick={handleRestart} className={styles.textBtn}>
+              Retake this quiz
+            </button>
+          </div>
+        </section>
+
+        {missed.length > 0 && (
+          <section className={styles.review}>
+            <h3 className={styles.reviewHeading}>Questions to review</h3>
             {missed.map((q, i) => (
-              <div key={`${q.id}-${i}`} className={styles.reviewCard}>
+              <div key={`${q.id}-${i}`} className={styles.card}>
                 <div className={styles.reviewMeta}>
-                  {q.subject} &middot; {q.topic} &middot; correct answer: {q.correct_answer}
+                  <SubjectMark subject={q.subject} size={12} />
+                  <span className={styles.reviewNumber}>Question {questions.indexOf(q) + 1}</span>
+                  <span>{q.topic}</span>
+                  <span className={styles.reviewAnswer}>Answer: {q.correct_answer}</span>
                 </div>
+                {q.question_image_path && (
+                  <img
+                    className={styles.reviewImage}
+                    src={`${apiBase}/${q.question_image_path}`}
+                    alt={`Diagram for question ${questions.indexOf(q) + 1}`}
+                  />
+                )}
+                {q.question_text && <p className={styles.reviewQuestion}>{q.question_text}</p>}
                 <ExplanationPanel text={q.explanation} />
               </div>
             ))}
-          </div>
+          </section>
         )}
-
-        <button onClick={handleRestart} className={styles.restartBtn}>
-          ↻ Start over
-        </button>
-
-        <button onClick={onFinish} className={styles.nextBtn}>
-          Close
-        </button>
       </div>
     );
   }
 
-  return (
-    <div className={styles.quizContainer}>
-      {/* ✖️ Close button */}
-      <button onClick={onFinish} className={styles.closeBtn} aria-label="Close quiz">
-        &times;
-      </button>
+  const isMCQ = current.type === 'MCQ';
+  const bubbleState = (num) => {
+    if (!showAnswer) return selected === num ? styles.bubbleFilled : '';
+    if (String(num) === String(current.correct_answer)) return styles.bubbleCorrect;
+    if (selected === num) return styles.bubbleWrong;
+    return styles.bubbleDim;
+  };
 
-      {/* Combined header row */}
-      <div className={styles.headerRow}>
-        <h2 className={styles.questionCount}>
-          Question {idx + 1} of {questions.length}
-          {wasResumed && <span className={styles.resumedTag}>resumed</span>}
-        </h2>
-        <div className={styles.metadata}>
-          {subject} – {month} {year}
+  return (
+    <div className={styles.quiz}>
+      <div className={styles.topbar}>
+        <button onClick={onFinish} className={styles.backBtn}>
+          <span aria-hidden="true">‹</span> Chat
+        </button>
+        <div className={styles.meta}>
+          <SubjectMark subject={subject} size={12} />
+          <span>{[subject, [month, year].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</span>
         </div>
       </div>
 
-      {/* Question image */}
-      {current.question_image_path && (
-        <img
-        src={`${apiBase}/${current.question_image_path}`}
-          alt="Question diagram"
-          style={{
-            width: '100%',
-            maxHeight: 300,
-            objectFit: 'contain',
-            marginBottom: 16
-          }}
-        />
-      )}
+      <div className={styles.counter}>
+        <h2 className="sr-only">Question {idx + 1} of {questions.length}</h2>
+        <span className={styles.counterNum} aria-hidden="true">{idx + 1}</span>
+        <span className={styles.counterOf} aria-hidden="true">of {questions.length}</span>
+        {wasResumed && <span className={styles.resumed}>Picked up where you left off</span>}
+      </div>
 
-      {/* Question text */}
-      <p className={styles.questionText}>{current.question_text}</p>
+      <div className={styles.card}>
+        {current.question_image_path && (
+          <img
+            className={styles.questionImage}
+            src={`${apiBase}/${current.question_image_path}`}
+            alt="Diagram for this question"
+          />
+        )}
 
-      {!showAnswer ? (
-        <>
-          {/* MCQ options 1–4, styled as scantron bubbles */}
-          {current.type === 'MCQ' && (
-            <div className={styles.options}>
-              {OPTIONS.map(num => (
-                <button
-                  key={num}
-                  onClick={() => setSel(num)}
-                  className={styles.optionBtn}
-                  aria-pressed={selected === num}
-                >
-                  <span className={`${styles.bubble} ${selected === num ? styles.bubbleFilled : ''}`}>
-                    {num}
-                  </span>
-                </button>
-              ))}
+        <p className={styles.questionText}>{current.question_text}</p>
+
+        {isMCQ ? (
+          <fieldset className={styles.sheet}>
+            <legend className="sr-only">Choose an answer</legend>
+            {OPTIONS.map(num => (
+              <label key={num} className={`${styles.bubble} ${bubbleState(num)}`}>
+                <input
+                  type="radio"
+                  name={`answer-${current.id}`}
+                  value={num}
+                  checked={selected === num}
+                  onChange={() => { setSel(num); setNudge(false); }}
+                  disabled={showAnswer}
+                  className={styles.bubbleInput}
+                />
+                <span aria-hidden="true">{num}</span>
+                <span className="sr-only">
+                  Choice {num}
+                  {showAnswer && String(num) === String(current.correct_answer) ? ', correct answer' : ''}
+                  {showAnswer && selected === num && String(num) !== String(current.correct_answer) ? ', your answer' : ''}
+                </span>
+              </label>
+            ))}
+          </fieldset>
+        ) : (
+          <input
+            type="text"
+            value={selected || ''}
+            onChange={e => { setSel(e.target.value); setNudge(false); }}
+            placeholder="Type your answer"
+            aria-label="Your answer"
+            disabled={showAnswer}
+            className={styles.freeResponseInput}
+          />
+        )}
+
+        {!showAnswer ? (
+          <>
+            <div className={styles.checkRow}>
+              <button onClick={handleCheck} className={styles.primaryBtn}>
+                Check answer
+              </button>
+              <p className={styles.nudge} role="alert">
+                {nudge ? (isMCQ ? 'Choose an answer first.' : 'Type an answer first.') : ''}
+              </p>
             </div>
-          )}
 
-          {/* Free-response if not MCQ */}
-          {current.type !== 'MCQ' && (
-            <input
-              type="text"
-              value={selected || ''}
-              onChange={e => setSel(e.target.value)}
-              placeholder="Type your answer"
-              className={styles.freeResponseInput}
-            />
-          )}
+            {/* Hints unlock one at a time while the student is still working:
+                the framing, then the method, then the opening steps -- stopping
+                short of the full solution. */}
+            {hints.length > 0 && (
+              <div className={styles.hintArea}>
+                {shownHints.length > 0 && (
+                  <p className={styles.aiNote}>Hints are taken from an AI-written explanation.</p>
+                )}
+                {shownHints.map((h, i) => (
+                  <div key={i} className={styles.hint}>
+                    <span className={styles.hintLabel}>{h.label}</span>
+                    <MathText>{h.body}</MathText>
+                  </div>
+                ))}
 
-          <button
-            onClick={handleCheck}
-            disabled={selected === null || selected === ''}
-            className={styles.checkBtn}
-          >
-            Check Answer
-          </button>
-
-          {/* Hints unlock one at a time while the student is still working:
-              the framing, then the method, then the opening steps -- stopping
-              short of the full solution. */}
-          {hints.length > 0 && (
-            <div className={styles.hintArea}>
-              {shownHints.map((h, i) => (
-                <div key={i} className={styles.hint}>
-                  <span className={styles.hintLabel}>{h.label}</span>
-                  <MathText>{h.body}</MathText>
-                </div>
-              ))}
-
-              {hintsLeft > 0 ? (
-                <button
-                  type="button"
-                  className={styles.hintBtn}
-                  onClick={() => { setHintLevel(l => l + 1); setHintsUsed(n => n + 1); }}
-                >
-                  💡 {hintLevel === 0 ? 'Need a hint?' : 'Another hint'}
-                  <span className={styles.hintCount}>{hintsLeft} left</span>
-                </button>
-              ) : (
-                <p className={styles.hintExhausted}>
-                  That's every hint — give it a go, then check your answer.
-                </p>
-              )}
-            </div>
-          )}
-        </>
-      ) : (
-        <div className={styles.feedback}>
-          <p className={isCorrect ? styles.correctMsg : styles.incorrectMsg}>
-            {isCorrect ? (
-              <>✅ Correct!</>
-            ) : (
-              <>❌ Incorrect. The correct answer was <strong>{current.correct_answer}</strong>.</>
+                {hintsLeft > 0 ? (
+                  <button
+                    type="button"
+                    className={styles.textBtn}
+                    onClick={() => { setHintLevel(l => l + 1); setHintsUsed(n => n + 1); }}
+                  >
+                    {hintLevel === 0 ? 'Show a hint' : 'Show another hint'}
+                    <span className={styles.hintCount}> ({hintsLeft} left)</span>
+                  </button>
+                ) : (
+                  <p className={styles.hintExhausted}>
+                    That's every hint. Give it a try, then check your answer.
+                  </p>
+                )}
+              </div>
             )}
-          </p>
+          </>
+        ) : (
+          <div className={styles.feedback}>
+            <p className={isCorrect ? styles.correctMsg : styles.incorrectMsg} role="status">
+              {isCorrect
+                ? 'Correct.'
+                : <>Not quite. The answer is <strong>{current.correct_answer}</strong>.</>}
+            </p>
 
-          {/* Opened by default when they got it wrong -- that's the moment the
-              explanation is worth reading -- and collapsed when they got it
-              right, so a correct answer isn't buried under a wall of text. */}
-          <ExplanationPanel text={current.explanation} defaultOpen={!isCorrect} />
+            {/* Opened by default when they got it wrong -- that's the moment the
+                explanation is worth reading -- and collapsed when they got it
+                right, so a correct answer isn't buried under a wall of text. */}
+            <ExplanationPanel text={current.explanation} defaultOpen={!isCorrect} />
 
-          <button onClick={handleNext} className={styles.nextBtn}>
-            {idx + 1 < questions.length ? 'Next Question' : 'Finish Quiz'}
-          </button>
-        </div>
-      )}
+            <button onClick={handleNext} className={styles.primaryBtn}>
+              {idx + 1 < questions.length ? 'Next question' : 'See results'}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

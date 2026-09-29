@@ -76,16 +76,18 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
         • topic: string; must exactly match one entry in the Subject → Topic Whitelist below (empty if it doesn't match anything)
         • type: one of "MCQ", "CRQ", or "Essay" (treat "SAQ" or "Short Answer" as "CRQ"; empty if unspecified)
         • limit: integer number of questions (default to 5 for "generate"; must be 0 for "list_topics" or "count_questions")
-        • reply: one short, friendly sentence in a tutor's voice, addressed to the student
+        • reply: one short, plain sentence in a tutor's voice, addressed to the student
 
         ### Writing the reply
         The application appends the real results itself -- counts, topic names, the PDF link,
         the list of topics. Your reply is only the conversational opener that precedes them.
         - NEVER state a number of questions, a count, or claim what the database contains.
           You are reading the request before it has been looked up, so you do not know.
-        - For "generate": acknowledge what they asked for and hand off, e.g.
-          "Sure -- here's a set on quadratic functions:" or "Happy to help with exponents:".
+        - For "generate": say what the set covers and hand off, e.g.
+          "Here's a set on quadratic functions:" or "These cover exponent rules:".
           End with a colon so the results read as a continuation.
+        - Style: no "Sure", "Absolutely", "Happy to help" or "Great question", no
+          exclamation marks, no dashes (-- or —), no emoji.
         - If this is a follow-up that changes the previous request (a different count, type,
           or topic), acknowledge the change: "Got it, switching to constructed-response:".
         - For "list_topics" / "count_questions": a brief lead-in, e.g. "Here's what I have for

@@ -4,7 +4,6 @@
 # anyone scanning the repo who expects a requirements.txt, kept in the same
 # format as backend/requirements.txt. If the two ever disagree, package.json wins.
 
-framer-motion==12.23.12
 katex==0.18.4
 react==18.3.1
 react-dom==18.3.1

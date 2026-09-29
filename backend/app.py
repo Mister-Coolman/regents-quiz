@@ -42,26 +42,16 @@ def healthz():
 
 def help_response():
     help_text = """
-    🤖 <b>How to Use the Chatbot</b><br><br>
-    Right now, I support three subjects: Algebra I, Geometry, and Algebra II <br>
-    You can ask me to do three things:
-    <ul style="margin-top:0.5rem">
-      <li><b>List Topics</b> – e.g. “List Algebra I topics”</li>
-      <li><b>Count Questions</b> – e.g. “How many MCQs on one variable equations?”</li>
-      <li><b>Generate Practice Questions</b> – e.g. “Give me 5 Algebra I MCQs on interpreting functions</li>
+    <b>What you can ask</b><br>
+    I have past questions for Algebra I, Geometry and Algebra II. Ask me to:
+    <ul>
+      <li><b>List topics</b>, like “List Algebra I topics”</li>
+      <li><b>Count questions</b>, like “How many MCQs on one-variable equations?”</li>
+      <li><b>Make a practice set</b>, like “Give me 5 Algebra I MCQs on interpreting functions”</li>
     </ul>
     <hr>
-    After you generate questions, you’ll see:
-    <ul>
-      <li>📄 A PDF link to download your questions</li>
-      <li>▶️ A “Take Interactive Quiz” button so you can answer them right here!</li>
-    </ul>
-    <hr>
-    <b>📘 Type Definitions:</b>
-    <ul>
-      <li><b>MCQ</b> = Multiple Choice Question</li>
-      <li><b>CRQ</b> = Constructed Response Question</li>
-    </ul>
+    Each practice set comes with a PDF to download and a quiz you can take right here.
+    MCQ means multiple choice; CRQ means constructed response, where you write the answer.
     """
     return jsonify({"response": help_text})
 
@@ -101,7 +91,7 @@ def no_results_message(subject, topic, qtype):
         other = db.count_questions(subject, topic, "")
         if other:
             return (f"I don't have any {escape(qtype)} questions for {escape(topic or subject)}, "
-                    f"but there are <b>{other}</b> of other types — try asking without the "
+                    f"but there are <b>{other}</b> of other types. Try asking without the "
                     f"{escape(qtype)} filter.")
 
     if topic:
@@ -109,7 +99,7 @@ def no_results_message(subject, topic, qtype):
         if broader:
             where = escape(subject) if subject else "that subject"
             return (f"Nothing stored for {escape(topic)} yet. There are <b>{broader}</b> questions "
-                    f"in {where} overall — want a different topic? Ask me to list topics.")
+                    f"in {where} overall. Ask me to list topics to pick a different one.")
 
     return (f"I couldn't find questions for {escape(asked)}. Try naming a subject and topic, "
             f"like '5 Algebra I MCQs on exponents', or ask me to list topics.")
@@ -145,7 +135,7 @@ def query():
 
     if intent == "list_topics":
         if not subject:
-            return jsonify({"response": "I can list topics for Algebra I, Algebra II, or Geometry — which one?"})
+            return jsonify({"response": "I can list topics for Algebra I, Algebra II or Geometry. Which one?"})
         topics = db.list_topics(subject)
         if topics:
             title = lead or f"Available topics for <b>{subject}</b>:<br>"
@@ -179,14 +169,15 @@ def query():
     label = topic or subject
     type_part = f"{qtype} " if qtype else ""
     topic_part = f" on '{escape(label)}'" if label else ""
-    pdf_link = f"<a href='{download_url}' target='_blank'>📄 Click here to view/download the PDF</a>"
+    pdf_link = (f"<a href='{download_url}' target='_blank' rel='noopener'>"
+                f"Open as PDF<span class='sr-only'> (opens in a new tab)</span></a>")
 
     opener = safe_reply(reply, len(questions))
     if opener:
         # The opener carries the voice, so the facts collapse to a compact line
         # rather than repeating the same sentence back at the student.
         facts = f"{len(questions)} {type_part}question{'s' if len(questions) != 1 else ''}{topic_part}"
-        bot_resp = f"{escape(opener)}<br><br>{facts} &middot; {pdf_link}"
+        bot_resp = f"{escape(opener)}<br><br>{facts}.<br>{pdf_link}"
     else:
         summary = f"Here are {len(questions)} {type_part}questions{topic_part}:"
         bot_resp = f"{summary}<br><br>{pdf_link}"

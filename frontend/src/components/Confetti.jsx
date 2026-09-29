@@ -1,8 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 
-// Paper rectangles rather than dots, in the exam-booklet palette plus one warm
-// accent -- the only place in the app that gets a celebratory colour.
-const COLORS = ['#123B6D', '#1E5AA8', '#2E8B4F', '#D8A43B', '#9FC1E8'];
+// The three subject marks -- red square, yellow triangle, blue circle -- plus
+// ink, so the celebration is made of the app's own geometry.
+const PIECES = [
+  { shape: 'square',   color: '#D8402B' },
+  { shape: 'triangle', color: '#F2B31B' },
+  { shape: 'circle',   color: '#1F5FBF' },
+  { shape: 'square',   color: '#121317' },
+];
 
 const COUNT = 90;
 const DURATION_MS = 2600;
@@ -17,11 +22,10 @@ function makePiece(width) {
     y: -10 - Math.random() * 40,
     vx: Math.cos(angle) * speed * 0.6,
     vy: Math.sin(angle) * speed + 4,
-    w: 5 + Math.random() * 6,
-    h: 9 + Math.random() * 8,
+    size: 7 + Math.random() * 7,
     rot: Math.random() * Math.PI,
     vrot: (Math.random() - 0.5) * 0.25,
-    color: COLORS[(Math.random() * COLORS.length) | 0],
+    ...PIECES[(Math.random() * PIECES.length) | 0],
   };
 }
 
@@ -76,7 +80,21 @@ export default function Confetti() {
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
         ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        const r = p.size / 2;
+        if (p.shape === 'circle') {
+          ctx.beginPath();
+          ctx.arc(0, 0, r, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (p.shape === 'triangle') {
+          ctx.beginPath();
+          ctx.moveTo(0, -r);
+          ctx.lineTo(r, r);
+          ctx.lineTo(-r, r);
+          ctx.closePath();
+          ctx.fill();
+        } else {
+          ctx.fillRect(-r, -r, p.size, p.size);
+        }
         ctx.restore();
       }
 

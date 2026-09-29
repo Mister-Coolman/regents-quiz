@@ -1,24 +1,20 @@
-// MessageBubble.jsx
 import React from 'react';
 import styles from '../styles/Chat.module.css';
 
-const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-
-export default function MessageBubble({ sender, children }) {
+// A student's message is shown as the request it is -- a line of text heading
+// the reply -- rather than as a text-message bubble.
+export default function MessageBubble({ sender, isError = false, children }) {
+  if (sender === 'student') {
+    return (
+      <p className={styles.request}>
+        <span className="sr-only">You asked: </span>
+        {children}
+      </p>
+    );
+  }
   return (
-    <div className={`${styles.messageRow} ${styles[sender]}`}>
-      {sender === 'bot' && (
-        <img src="/bot-avatar.png" alt="Bot" className={styles.avatar} />
-      )}
-      <div className={`${styles.bubbleStack} ${styles[sender]}`}>
-        <span className={styles.senderLabel}>{sender === 'bot' ? 'Math Bot' : 'You'}</span>
-        <div className={`${styles.bubble} ${styles[sender]}`}>
-          {children}
-        </div>
-      </div>
-      {sender === 'student' && (
-        <img src="/user-avatar.png" alt="You" className={styles.avatar} />
-      )}
+    <div className={styles.reply} role={isError ? 'alert' : undefined}>
+      {children}
     </div>
   );
 }

@@ -1,9 +1,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import React, { useState, useEffect, useRef } from 'react';
-import { AnimatePresence, motion }      from 'framer-motion';
 import QuizPlayer                       from './QuizPlayer';
 import MessageBubble                    from './MessageBubble';
 import TypingIndicator                  from './TypingIndicator';
+import SubjectMark, { SUBJECTS }        from './SubjectMark';
 import styles                           from '../styles/Chat.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
@@ -19,16 +19,16 @@ export default function Chat() {
     setSessionId(sid);
   }, []);
   // Messages carry a stable key of their own. Array indices can't be used:
-  // loading history replaces the whole list, and AnimatePresence would then
-  // match new bubbles to old ones and animate/render the wrong entries.
+  // loading history replaces the whole list, and React would then match new
+  // messages to old ones and reuse the wrong elements.
   const nextKey = useRef(0);
   const withKeys = (list) => list.map(m => ({ ...m, key: m.key ?? `m${nextKey.current++}` }));
 
-  // Fixed key: clearing history sets the greeting, then the history effect sets
-  // it again. With a freshly minted key each time React would unmount and
-  // remount the bubble, and framer-motion strands the orphaned node.
+  // The greeting is a sentinel for "nothing asked yet": it switches the page to
+  // the welcome screen and is never drawn in the transcript. Fixed key so the
+  // empty check below can recognise it.
   const greeting = () => ([
-    { key: 'greeting', sender: 'bot', text: 'Hi there! How can I help you today?', questions: [] }
+    { key: 'greeting', sender: 'bot', text: 'Ask for a practice set, a list of topics, or a question count.', questions: [] }
   ]);
 
   const [messages, setMessages] = useState(greeting);
@@ -99,13 +99,13 @@ export default function Chat() {
           const body = await res.json();
           if (body?.error) detail = body.error;
         } catch { /* response wasn't JSON */ }
-        replaceTyping({ sender: 'bot', text: `⚠️ ${detail} Please try again.`, questions: [], failedQuery: text });
+        replaceTyping({ sender: 'bot', text: `${detail} Try again in a moment.`, questions: [], failedQuery: text });
         return;
       }
 
       const data = await res.json();
       if (!data?.response) {
-        replaceTyping({ sender: 'bot', text: '⚠️ Got an empty reply from the server. Please try again.', questions: [], failedQuery: text });
+        replaceTyping({ sender: 'bot', text: 'The server sent back an empty reply. Try again in a moment.', questions: [], failedQuery: text });
         return;
       }
 
@@ -114,7 +114,7 @@ export default function Chat() {
       console.error('Query failed:', err);
       replaceTyping({
         sender: 'bot',
-        text: "⚠️ Couldn't reach the server. Check your connection and try again.",
+        text: "Couldn't reach the server. Check your connection, then try again.",
         questions: [],
         failedQuery: text,
       });
@@ -122,131 +122,182 @@ export default function Chat() {
       setLoading(false);
     }
   };
-  const handleClearHistory = () => {
-    setMessages(greeting());
-    setActiveQuizKey(null);
+  // "New chat" can be undone for a few seconds, so the old session is only
+  // ended on the backend once that window has passed.
+  const UNDO_MS = 8000;
+  const [cleared, setCleared] = useState(null);   // { sessionId, messages, timer }
 
-    // Tell the backend to drop the old session, then move to a fresh id.
-    // Fire-and-forget is fine -- the new id is what everything uses from here.
+  const endSession = (sid) => {
     fetch(`${apiBase}/api/end_session`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId })
+      body: JSON.stringify({ session_id: sid })
     }).catch(err => console.error('Failed to end session:', err));
+  };
 
+  const handleClearHistory = () => {
+    if (cleared) {
+      clearTimeout(cleared.timer);
+      endSession(cleared.sessionId);
+    }
+    const oldSid = sessionId;
+    const timer = setTimeout(() => {
+      endSession(oldSid);
+      setCleared(null);
+    }, UNDO_MS);
+    setCleared({ sessionId: oldSid, messages, timer });
+
+    setMessages(greeting());
+    setActiveQuizKey(null);
     const newSid = uuidv4();
     localStorage.setItem('regentsSessionId', newSid);
     setSessionId(newSid);
   };
+
+  const handleUndoClear = () => {
+    if (!cleared) return;
+    clearTimeout(cleared.timer);
+    localStorage.setItem('regentsSessionId', cleared.sessionId);
+    setSessionId(cleared.sessionId);
+    setMessages(cleared.messages);
+    setCleared(null);
+  };
   
+  // Only the greeting so far: show the welcome screen instead of a lone bubble.
+  const isEmpty = messages.length === 1 && messages[0].key === 'greeting';
+
   return (
-    <div className={styles.container}>
-      <div className={styles.header}>
-        <span className={styles.eyebrow}>NY Regents Prep</span>
-        <div className={styles.title}>Math Practice Chatbot</div>
-        <button
-          className={styles.clearHistoryBtn}
-          onClick={handleClearHistory}
-          title="Clear chat history"
-        >
-          🗑️
-        </button>
-      </div>
-
-      {/* Keyed by session so clearing history discards the whole subtree.
-          Replacing the list wholesale otherwise leaves framer-motion holding
-          exited nodes that never unmount -- invisible, but still taking up
-          layout space in the scroll area. */}
-      <div className={styles.chatWindow} key={sessionId}>
-        <AnimatePresence initial={false}>
-          {messages.map((msg) => (
-            msg.typing ? (
-              <motion.div
-                key="typing"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.2 }}
-              >
-                <TypingIndicator />
-              </motion.div>
-            ) : (
-              <motion.div
-                key={msg.key}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-              >
-                <MessageBubble sender={msg.sender}>
-                  {msg.sender === 'bot' ? (
-                    <div dangerouslySetInnerHTML={{ __html: msg.text }} />
-                  ) : (
-                    <span>{msg.text}</span>
-                  )}
-
-                  {msg.sender === 'bot' && msg.questions?.length > 0 && (
-                    <button
-                      className={styles.quizButton}
-                      onClick={() => setActiveQuizKey(msg.key)}
-                    >
-                      ▶️ Take Interactive Quiz
-                    </button>
-                  )}
-
-                  {msg.failedQuery && (
-                    <button
-                      className={styles.quizButton}
-                      onClick={() => sendMessage(msg.failedQuery)}
-                      disabled={loading}
-                    >
-                      ↻ Try again
-                    </button>
-                  )}
-                </MessageBubble>
-              </motion.div>
-            )
-          ))}
-        </AnimatePresence>
-
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Quiz overlay */}
-      {activeQuiz && (
-        <QuizPlayer
-          questions={activeQuiz.questions}
-          onFinish={() => setActiveQuizKey(null)}
-        />
-      )}
-
-      {/* Input bar */}
-      {!activeQuiz && (
-        <div className={styles.inputBar}>
-          <input
-            type="text"
-            placeholder="e.g., 5 MCQs on interpreting functions"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && sendMessage()}
-          />
-          <div className={styles.actions}>
-            <button
-              className={styles.sendBtn}
-              onClick={() => sendMessage()}
-              disabled={loading}
-            >
-              Send
+    <div className={styles.app}>
+      <header className={styles.nav}>
+        <div className={styles.navInner}>
+          <span className={styles.wordmark}>
+            <span className={styles.marks} aria-hidden="true">
+              {SUBJECTS.map(s => <SubjectMark key={s.name} subject={s} size={11} />)}
+            </span>
+            Regents Prep
+          </span>
+          {!isEmpty && !activeQuiz && (
+            <button className={styles.navBtn} onClick={handleClearHistory}>
+              New chat
             </button>
+          )}
+        </div>
+      </header>
+
+      {activeQuiz ? (
+        <main className={styles.main}>
+          <QuizPlayer
+            questions={activeQuiz.questions}
+            onFinish={() => setActiveQuizKey(null)}
+          />
+        </main>
+      ) : (
+        <>
+          {/* Keyed by session so clearing history discards the whole subtree. */}
+          <main className={styles.main} key={sessionId}>
+            {isEmpty ? (
+              <section className={styles.welcome}>
+                <h1 className={styles.headline}>Practice with real Regents questions.</h1>
+                <p className={styles.lede}>
+                  Questions and answer keys come from past Regents exams. The
+                  explanations and hints are written by AI and can contain mistakes.
+                </p>
+                <ul className={styles.subjectList}>
+                  {SUBJECTS.map(s => (
+                    <li key={s.name}>
+                      <button
+                        className={styles.subjectRow}
+                        onClick={() => sendMessage(`List ${s.name} topics`)}
+                        disabled={loading}
+                      >
+                        <SubjectMark subject={s} size={18} />
+                        <span className={styles.subjectName}>{s.name}</span>
+                        <span className={styles.subjectAction}>See topics</span>
+                        <span className={styles.chevron} aria-hidden="true">›</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : (
+              <div className={styles.transcript} role="log" aria-live="polite" aria-label="Conversation">
+                {messages.filter(m => m.key !== 'greeting').map((msg) => (
+                  msg.typing ? (
+                    <TypingIndicator key="typing" />
+                  ) : (
+                    <MessageBubble key={msg.key} sender={msg.sender} isError={Boolean(msg.failedQuery)}>
+                      {msg.sender === 'bot' ? (
+                        <div className={styles.botHtml} dangerouslySetInnerHTML={{ __html: msg.text }} />
+                      ) : (
+                        msg.text
+                      )}
+
+                      {msg.sender === 'bot' && msg.questions?.length > 0 && (
+                        <button
+                          className={styles.primaryBtn}
+                          onClick={() => setActiveQuizKey(msg.key)}
+                        >
+                          Start quiz
+                        </button>
+                      )}
+
+                      {msg.failedQuery && (
+                        <button
+                          className={styles.textBtn}
+                          onClick={() => sendMessage(msg.failedQuery)}
+                          disabled={loading}
+                        >
+                          Try again
+                        </button>
+                      )}
+                    </MessageBubble>
+                  )
+                ))}
+              </div>
+            )}
+
+            <div ref={messagesEndRef} />
+          </main>
+
+          <footer className={styles.composerDock}>
+            {/* The live region stays mounted so screen readers catch the change. */}
+            <div role="status">
+              {cleared && (
+                <div className={styles.undoBar}>
+                  <span>Chat cleared.</span>
+                  <button className={styles.textBtn} onClick={handleUndoClear}>Undo</button>
+                </div>
+              )}
+            </div>
+            <form
+              className={styles.composer}
+              onSubmit={e => { e.preventDefault(); sendMessage(); }}
+            >
+              <label htmlFor="composer-input" className={styles.composerLabel}>
+                Ask for a practice set, a list of topics or a question count
+              </label>
+              <div className={styles.composerRow}>
+                <input
+                  id="composer-input"
+                  type="text"
+                  placeholder="5 Geometry MCQs on circles"
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                />
+                <button type="submit" className={styles.sendBtn} disabled={loading}>
+                  Send
+                </button>
+              </div>
+            </form>
             <button
               className={styles.helpBtn}
               onClick={() => sendMessage('help')}
               disabled={loading}
             >
-              Help
+              See examples
             </button>
-          </div>
-        </div>
+          </footer>
+        </>
       )}
     </div>
   );

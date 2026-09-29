@@ -7,7 +7,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "framer-motion": "^12.23.12",
     "katex": "^0.18.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -18,11 +17,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.0.0",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "tailwindcss": "^4.1.11",
-    "vite": "^7.0.5",
-    "vite-tsconfig-paths": "^5.1.4"
+    "vite": "^7.0.5"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
