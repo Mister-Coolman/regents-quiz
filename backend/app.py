@@ -18,7 +18,7 @@ load_dotenv()
 import db
 from answers import check_answer, public_question
 from llm_client import parse_query_with_ollama, clean_topic
-from pdf_utils import generate_pdf
+from pdf_utils import generate_pdf, pdf_filename
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 
@@ -299,7 +299,7 @@ def download():
     return send_file(
         io.BytesIO(pdf_bytes),
         as_attachment=False,
-        download_name="regents_questions.pdf",
+        download_name=pdf_filename(questions),
         mimetype="application/pdf",
         max_age=3600,
     )
