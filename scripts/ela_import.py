@@ -34,7 +34,9 @@ bundle.json, as this script expects it:
     ]
   }
 
-"stanza_break": true marks a blank line before that line.
+"stanza_break": true marks a blank line before that line; "indent": true an
+indented printed line. Bundles written by ela_extract.py are translated into
+this shape first (from_extractor).
 "n" is the printed line number for every line of a numbered passage (null
 for unnumbered lines such as a title inside the text). "line_refs" is
 optional: when present it must equal what parse_line_refs reads from the
@@ -65,6 +67,18 @@ _RANGE = r"\d+(?:\s*(?:through|to|-|–|—)\s*\d+)?"
 LINE_REF_RE = re.compile(rf"\blines?\s+({_RANGE}(?:\s*(?:,\s*and|,|and)\s*{_RANGE})*)", re.IGNORECASE)
 
 
+def merge_ranges(refs):
+    """Join ranges that touch: "lines 7 and 8" is one passage of two lines,
+    not two citations."""
+    out = []
+    for start, end in refs:
+        if out and out[-1][1] + 1 == start:
+            out[-1] = (out[-1][0], end)
+        else:
+            out.append((start, end))
+    return out
+
+
 def parse_line_refs(stem):
     """[(start, end)] cited in a question stem, in order. Only ever call this
     on the stem: choices quote the passage and their numbers aren't refs."""
@@ -72,15 +86,75 @@ def parse_line_refs(stem):
     for m in LINE_REF_RE.finditer(stem or ""):
         for part in re.split(r"\s*(?:,\s*and|,|and)\s*", m.group(1)):
             nums = [int(n) for n in re.findall(r"\d+", part)]
-            if not nums:
-                continue
-            start, end = nums[0], nums[-1]
-            # "lines 7 and 8" is one passage of two lines, not two citations.
-            if refs and refs[-1][1] + 1 == start:
-                refs[-1] = (refs[-1][0], end)
-            else:
-                refs.append((start, end))
-    return refs
+            if nums:
+                refs.append((nums[0], nums[-1]))
+    return merge_ranges(refs)
+
+
+def _kind(raw):
+    k = (raw or "").strip().lower()
+    for prefix, kind in (("lit", "literary"), ("fic", "literary"), ("poe", "poem"), ("inf", "informational")):
+        if k.startswith(prefix):
+            return kind
+    return k
+
+
+def from_extractor(raw):
+    """Translate ela_extract.py's bundle into the shape documented above.
+
+    ela_extract.py writes questions as {no, passage, stem, key, crop,
+    line_refs: [{start, end, source}]}, lines with gap_before and indent,
+    credit lines as `attribution` and footnotes as {n, term, gloss}.
+    Bundles already in the documented shape pass through unchanged."""
+    questions = raw.get("questions") or []
+    if not questions or "no" not in questions[0]:
+        return raw
+    exam = dict(raw["exam"])
+    exam.pop("source", None)
+    month = str(exam.get("month") or "")
+    exam["month"] = next((m for m in MONTHS if m[:3].lower() == month[:3].lower()), month)
+    if str(exam.get("subject") or "").lower() in ("ela", "english", "english language arts"):
+        exam["subject"] = ELA_SUBJECT
+    stimuli = []
+    for s in raw["stimuli"]:
+        lines = []
+        for line in s["lines"]:
+            out = {"n": line.get("n"), "text": line["text"]}
+            if line.get("gap_before"):
+                out["stanza_break"] = True
+            if line.get("indent"):
+                out["indent"] = True
+            lines.append(out)
+        stimuli.append({
+            "label": s["label"],
+            "kind": _kind(s.get("kind")),
+            "title": s.get("title"),
+            "author": s.get("author"),
+            "intro": s.get("intro"),
+            "lines": lines,
+            "footnotes": [f"{f.get('n', '')} {f.get('term', '')}: {f.get('gloss', '')}".strip()
+                          for f in s.get("footnotes") or []],
+            "credit": "\n".join(a["text"] for a in s.get("attribution") or [] if a.get("text")) or None,
+        })
+    return {
+        "exam": exam,
+        "stimuli": stimuli,
+        "questions": [{
+            "question_no": q["no"],
+            "part": q.get("part", 1),
+            "stimulus": q["passage"],
+            "image": q["crop"],
+            "question_text": q["stem"],
+            "choices": q["choices"],
+            "correct_answer": str(q["key"]),
+            "standard": q.get("standard"),
+            "line_refs": [[r["start"], r["end"]] for r in q.get("line_refs") or []
+                          if r.get("source", "stem") == "stem"],
+        } for q in questions],
+        # Kept for the report only: figures are never imported (they may be
+        # third-party images, and no question so far refers to one).
+        "figures": raw.get("figures") or [],
+    }
 
 
 def _texts(bundle):
@@ -128,6 +202,9 @@ def check_bundle(bundle, bundle_dir, allow_partial=False):
 
     questions = bundle.get("questions") or []
     nos = [q.get("question_no") for q in questions]
+    if not all(isinstance(n, int) for n in nos):
+        return errors + ["some questions have no integer question_no: is this bundle in the documented "
+                         "shape, or ela_extract.py's (see from_extractor)?"]
     if not allow_partial and sorted(nos) != list(range(1, PART1_QUESTIONS + 1)):
         errors.append(f"expected questions 1-{PART1_QUESTIONS}, got {sorted(n for n in nos if n)}")
     if len(set(nos)) != len(nos):
@@ -149,7 +226,7 @@ def check_bundle(bundle, bundle_dir, allow_partial=False):
         if not q.get("image") or not os.path.isfile(image):
             errors.append(f"{tag}: crop missing: {q.get('image')}")
         parsed = parse_line_refs(q.get("question_text"))
-        given = [tuple(r) for r in q["line_refs"]] if q.get("line_refs") is not None else parsed
+        given = merge_ranges([tuple(r) for r in q["line_refs"]]) if q.get("line_refs") is not None else parsed
         if given != parsed:
             errors.append(f"{tag}: line_refs {given} differ from the stem's {parsed}")
         for start, end in given:
@@ -169,6 +246,8 @@ def _line(line):
     out = {"n": line.get("n"), "text": line["text"]}
     if line.get("stanza_break"):
         out["stanza_break"] = True
+    if line.get("indent"):
+        out["indent"] = True
     return out
 
 
@@ -245,7 +324,8 @@ def import_bundle(conn, bundle, bundle_dir, static_dir=STATIC):
         cur.execute("DELETE FROM question_stimuli WHERE question_id = ?", (qid,))
         cur.execute("DELETE FROM question_line_refs WHERE question_id = ?", (qid,))
         cur.execute("INSERT INTO question_stimuli (question_id, stimulus_id) VALUES (?, ?)", (qid, stim_ids[label]))
-        refs = q["line_refs"] if q.get("line_refs") is not None else parse_line_refs(q["question_text"])
+        refs = merge_ranges([tuple(r) for r in q["line_refs"]]) if q.get("line_refs") is not None \
+            else parse_line_refs(q["question_text"])
         for start, end in refs:
             cur.execute("""INSERT OR IGNORE INTO question_line_refs (question_id, stimulus_id, line_start, line_end)
                            VALUES (?, ?, ?, ?)""", (qid, stim_ids[label], start, end))
@@ -269,7 +349,12 @@ def main():
 
     bundle_dir = os.path.join(OUT_DIR, args.code)
     with open(os.path.join(bundle_dir, "bundle.json")) as f:
-        bundle = json.load(f)
+        raw = json.load(f)
+    for w in (raw.get("gates") or {}).get("warnings") or []:
+        print(f"[extract warning] {w}")
+    bundle = from_extractor(raw)
+    for fig in bundle.get("figures") or []:
+        print(f"[import] not imported: figure in passage {fig.get('passage')} on page {fig.get('page')}")
     errors = check_bundle(bundle, bundle_dir, args.allow_partial)
     for e in errors:
         print(f"[gate] {e}")

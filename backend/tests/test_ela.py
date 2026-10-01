@@ -253,3 +253,36 @@ def test_stimuli_json_shape(synth_db):
     conn.close()
     assert lines[4] == {"n": 5, "text": "Line 5 of the poem", "stanza_break": True}
     assert "stanza_break" not in lines[0]
+
+
+def test_extractor_bundle_is_translated(tmp_path):
+    """ela_extract.py's own bundle shape imports after from_extractor."""
+    ours = ela_bundle(str(tmp_path))
+    raw = {
+        "exam": {"subject": "ELA", "month": "Jun", "year": 2026, "code": "626", "source": "x.pdf"},
+        "stimuli": [{
+            "label": s["label"], "kind": s["kind"], "title": s["title"], "title_notes": [],
+            "lines": [{"n": l["n"], "text": l["text"], "indent": False, "gap_before": bool(l.get("stanza_break")),
+                       "italic": [], "notes": [], "page": 1, "y": 0.0} for l in s["lines"]],
+            "line_count": len(s["lines"]), "printed_numbers": [5, 10],
+            "attribution": [{"text": s["credit"], "italic": []}],
+            "footnotes": [{"n": 1, "term": "word", "gloss": "meaning"}],
+            "pages": [1],
+        } for s in ours["stimuli"]],
+        "questions": [{
+            "no": q["question_no"], "passage": q["stimulus"], "stem": q["question_text"],
+            "choices": q["choices"], "key": q["correct_answer"], "standard_raw": "RL.1", "standard": "RL.1",
+            # Unmerged, as a stem parser may give them: "lines 1 and 2" -> 1-1, 2-2.
+            "line_refs": [{"start": n, "end": n, "source": "stem"}
+                          for a, b in ela_import.parse_line_refs(q["question_text"]) for n in range(a, b + 1)],
+            "crop": q["image"], "crop_px": [10, 10], "crop_rect": {"page": 1, "rect": [0, 0, 1, 1]},
+        } for q in ours["questions"]],
+        "figures": [{"page": 6, "bbox": [0, 0, 1, 1], "passage": "C"}],
+        "gates": {"errors": [], "warnings": []},
+    }
+    bundle = ela_import.from_extractor(raw)
+    assert bundle["exam"]["month"] == "June"
+    assert bundle["stimuli"][0]["footnotes"] == ["1 word: meaning"]
+    assert bundle["stimuli"][1]["lines"][4].get("stanza_break") is True
+    assert ela_import.check_bundle(bundle, str(tmp_path), allow_partial=True) == []
+    assert ela_import.from_extractor(ours) is ours

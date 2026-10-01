@@ -112,6 +112,11 @@
   text-indent: -1em;
 }
 
+/* A line printed indented (a poem's turned line, a paragraph's first line). */
+.line[data-indent="true"] .text {
+  margin-left: 1.5em;
+}
+
 /* ---- Cited lines: band + ink bracket + label, never colour alone ---- */
 .cited {
   margin: 12px 0 12px -10px;
@@ -171,6 +176,7 @@
 
 .credit {
   margin: 16px 0 0;
+  white-space: pre-line;
   font-size: 13px;
   line-height: 1.5;
   color: var(--ink-2);

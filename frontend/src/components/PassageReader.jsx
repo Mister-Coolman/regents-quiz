@@ -5,7 +5,11 @@ import styles from '../styles/Passage.module.css';
 /** One printed line: the number in the gutter, the text with a hanging indent. */
 export function Line({ line, showNumber }) {
   return (
-    <div className={styles.line} data-stanza={line.stanza_break ? 'true' : undefined}>
+    <div
+      className={styles.line}
+      data-stanza={line.stanza_break ? 'true' : undefined}
+      data-indent={line.indent ? 'true' : undefined}
+    >
       <span className={styles.num} aria-hidden="true">{showNumber ? line.n : ''}</span>
       <span className={styles.text}>{line.text}</span>
     </div>
