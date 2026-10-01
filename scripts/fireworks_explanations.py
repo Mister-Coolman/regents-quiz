@@ -46,7 +46,7 @@ BROKEN_CROPS_PATH = os.path.join(BASE_DIR, "broken_crops.csv")
 NEEDS_REVIEW_PATH = os.path.join(BASE_DIR, "needs_review.csv")
 
 FIREWORKS_URL = "https://api.fireworks.ai/inference/v1/chat/completions"
-FIREWORKS_MODEL = "accounts/fireworks/models/qwen3p7-plus"
+FIREWORKS_MODEL = "accounts/fireworks/models/deepseek-v4p1-flash"
 API_KEY = os.getenv("FIREWORKS_API_KEY")
 
 # Per 1M tokens, from Fireworks' published pricing for this model.
