@@ -1,6 +1,5 @@
 import React from 'react';
 import { Line } from './PassageReader';
-import ProseFlow from './ProseFlow';
 import { rangeLabel } from './lines';
 import styles from '../styles/Passage.module.css';
 
@@ -15,9 +14,7 @@ export default function LineExcerpt({ stimulus, start, end }) {
         {label}{stimulus.title ? `, from “${stimulus.title}”` : ''}
       </figcaption>
       <div className={styles.cited}>
-        {stimulus.kind === 'poem'
-          ? lines.map((line, i) => <Line key={i} line={line} showNumber />)
-          : <ProseFlow lines={lines} firstNumbered={start} />}
+        {lines.map((line, i) => <Line key={i} line={line} />)}
       </div>
     </figure>
   );
