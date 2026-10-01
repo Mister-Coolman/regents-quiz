@@ -149,8 +149,9 @@ def from_extractor(raw):
             "choices": q["choices"],
             "correct_answer": str(q["key"]),
             "standard": q.get("standard"),
-            "line_refs": [[r["start"], r["end"]] for r in q.get("line_refs") or []
-                          if r.get("source", "stem") == "stem"],
+            # `source` is the matched stem text ("lines 11 and 12"); the
+            # extractor reads refs from the stem only, so all of them count.
+            "line_refs": [[r["start"], r["end"]] for r in q.get("line_refs") or []],
         } for q in questions],
         # Kept for the report only: figures are never imported (they may be
         # third-party images, and no question so far refers to one).

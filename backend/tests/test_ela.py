@@ -277,7 +277,7 @@ def test_extractor_bundle_is_translated(tmp_path):
             "no": q["question_no"], "passage": q["stimulus"], "stem": q["question_text"],
             "choices": q["choices"], "key": q["correct_answer"], "standard_raw": "RL.1", "standard": "RL.1",
             # Unmerged, as a stem parser may give them: "lines 1 and 2" -> 1-1, 2-2.
-            "line_refs": [{"start": n, "end": n, "source": "stem"}
+            "line_refs": [{"start": n, "end": n, "source": f"line {n}"}
                           for a, b in ela_import.parse_line_refs(q["question_text"]) for n in range(a, b + 1)],
             "crop": q["image"], "crop_px": [10, 10], "crop_rect": {"page": 1, "rect": [0, 0, 1, 1]},
         } for q in ours["questions"]],
@@ -288,5 +288,8 @@ def test_extractor_bundle_is_translated(tmp_path):
     assert bundle["exam"]["month"] == "June"
     assert bundle["stimuli"][0]["footnotes"] == ["1 word: meaning"]
     assert bundle["stimuli"][1]["lines"][4].get("stanza_break") is True
-    assert ela_import.check_bundle(bundle, str(tmp_path), allow_partial=True) == []
+    warnings = []
+    assert ela_import.check_bundle(bundle, str(tmp_path), allow_partial=True, warnings=warnings) == []
+    assert warnings == []
+    assert bundle["questions"][0]["line_refs"] == [[3, 3], [4, 4], [5, 5]]
     assert ela_import.from_extractor(ours) is ours
