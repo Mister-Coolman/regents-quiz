@@ -2,11 +2,11 @@ import sqlite3
 
 import pytest
 
-from answers import HIDDEN_FIELDS, PUBLIC_FIELDS, public_question
+from answers import HIDDEN_FIELDS, OPTIONAL_PUBLIC_FIELDS, PUBLIC_FIELDS, public_question
 from conftest import needs_db
 
 SID = "test-session-0001"
-ALLOWED = set(PUBLIC_FIELDS) | {"hints"}
+ALLOWED = set(PUBLIC_FIELDS) | set(OPTIONAL_PUBLIC_FIELDS) | {"hints"}
 
 
 def query(client, sid=SID, text="give me 3 algebra 1 mcqs"):
@@ -24,6 +24,14 @@ def test_public_question_is_an_allowlist():
     assert set(out) <= ALLOWED
     assert not set(out) & set(HIDDEN_FIELDS)
     assert "question_text" not in out and "choices" not in out
+
+
+def test_unset_optional_fields_are_not_sent():
+    """Math rows have no alt_text or passage links; their payload must not
+    grow empty keys (the golden fingerprints depend on it)."""
+    row = {"id": 1, "subject": "Geometry", "topic": "t", "month": "June", "year": 2024, "type": "MCQ",
+           "question_image_path": "x.png", "question_no": 3, "alt_text": None, "exam_id": 4}
+    assert set(public_question(row)) == set(PUBLIC_FIELDS) | {"hints"}
 
 
 @needs_db

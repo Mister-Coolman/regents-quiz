@@ -40,5 +40,6 @@ __pycache__/
 # never be committed. (ELA question crops are NYSED material and may be.)
 /scripts/ela_*/
 /scripts/*passage*
+!/scripts/check_no_passages.sh
 *.stimuli.json
 /backend/static/stimuli/

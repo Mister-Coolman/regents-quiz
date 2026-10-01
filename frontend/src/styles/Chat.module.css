@@ -65,6 +65,14 @@
   padding: 0 20px 24px;
 }
 
+/* A passage set needs room for the passage beside the question. The chat
+   itself keeps its 720px reading column. */
+@media (min-width: 1024px) {
+  .mainWide {
+    max-width: 1180px;
+  }
+}
+
 /* ---- Welcome ---- */
 .welcome {
   padding: 12vh 0 40px;

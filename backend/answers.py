@@ -14,13 +14,20 @@ PUBLIC_FIELDS = (
     "question_image_path", "question_no",
 )
 
+# Sent only when set, so rows that don't use them (every math question) send
+# exactly what they always did. alt_text is what a screen reader announces for
+# the question image; stimulus_ids and line_refs tie an ELA question to its
+# passage and the lines its stem cites (they are added by db, not columns).
+OPTIONAL_PUBLIC_FIELDS = ("alt_text", "stimulus_ids", "line_refs")
+
 # Fields a student may not see before answering. A second check on top of the
 # allowlist: none of these may ever be added to PUBLIC_FIELDS.
-HIDDEN_FIELDS = ("correct_answer", "explanation", "rubric")
-assert not set(PUBLIC_FIELDS) & set(HIDDEN_FIELDS)
+# question_text and choices are internal: the image is what students see.
+HIDDEN_FIELDS = ("correct_answer", "explanation", "rubric", "question_text", "choices")
+assert not (set(PUBLIC_FIELDS) | set(OPTIONAL_PUBLIC_FIELDS)) & set(HIDDEN_FIELDS)
 
 # Explanations are generated in a fixed four-section shape (enforced by the
-# validator in scripts/fireworks_explanations.py):
+# validators in scripts/fireworks_explanations.py and ela_explanations.py):
 #   **What's being asked** / **Approach** / **Work** (numbered steps) / **Answer**
 HEADINGS = [
     ("asked", "What's being asked"),
@@ -70,6 +77,7 @@ def build_hints(explanation):
 def public_question(q):
     """The question as the browser may see it before an answer is submitted."""
     out = {k: q[k] for k in PUBLIC_FIELDS if k in q}
+    out.update({k: q[k] for k in OPTIONAL_PUBLIC_FIELDS if q.get(k) is not None})
     out["hints"] = build_hints(q.get("explanation"))
     return out
 

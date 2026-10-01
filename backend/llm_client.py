@@ -9,6 +9,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+import config
 from topics import (
     build_topic_whitelist_markdown,
     is_valid_subject,
@@ -69,6 +70,8 @@ def clean_topic(raw_topic: str) -> str:
 
 def parse_query_with_ollama(query_text, last_query=None):
     topic_whitelist_section = build_topic_whitelist_markdown()
+    # Only advertise ELA once it is switched on.
+    ela_capability = " (and English Language Arts reading passages)" if config.ELA_ENABLED else ""
     print(f"[DEBUG] Parsing query with Fireworks: {query_text} (last_query={last_query})")
 
     if last_query and any(last_query.values()):
@@ -96,7 +99,9 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
         • "chitchat": the message isn't a request for questions at all -- a greeting,
           a thank-you, a question about what you can do, or something you can't act on
 
-        • subject: one of "Algebra I", "Algebra II", "Geometry", or "ELA" (empty if unspecified)
+        • subject: one of "Algebra I", "Algebra II", "Geometry", or "ELA" (empty if unspecified).
+          "ELA" is English Language Arts: use it for English, reading, a passage, a poem, or
+          reading comprehension.
         • topic: string; must exactly match one entry in the Subject → Topic Whitelist below (empty if it doesn't match anything)
         • type: one of "MCQ", "CRQ", or "Essay" (treat "SAQ" or "Short Answer" as "CRQ"; empty if unspecified)
         • limit: integer number of questions (default to 5 for "generate"; must be 0 for "list_topics" or "count_questions")
@@ -119,10 +124,22 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
         - For "chitchat": answer them directly and warmly in one or two sentences, and steer
           back to practice. Greeting -> greet back and say what you can do. Thanks -> welcome
           them. Asking what you can do -> say you pull real past Regents questions for Algebra I,
-          Algebra II, and Geometry, and can list topics or count them. A math question you
+          Algebra II, and Geometry{ela_capability}, and can list topics or count them. A math question you
           cannot answer -> say you serve practice questions rather than solving problems, and
           offer questions on that topic instead. Do not end with a colon.
         - Never invent topic names, exam years, or statistics.
+
+        ### English Language Arts (subject "ELA")
+        - ELA has no topics: always leave topic empty. It is served as whole passage sets
+          (a passage and every question about it), never as single questions.
+        - "Give me an ELA passage", "a reading passage", "English practice", "a poem to practice
+          with" -> intent="generate", subject="ELA", type="MCQ", limit=5.
+        - For ELA, limit counts questions at about 10 per passage: "2 passages" -> limit=20,
+          "a passage" -> limit=5.
+        - "What ELA practice do you have?", "What English Language Arts practice is there?"
+          -> intent="list_topics", subject="ELA".
+        - Essay or writing requests for ELA keep type="Essay"; the application answers them.
+        - Reply example for ELA: "Here's a passage to read:".
 
         ### Default rules & error-proofing
         - If the text asks to “list topics” or “what topics”, set intent="list_topics" (subject may still be filled).
