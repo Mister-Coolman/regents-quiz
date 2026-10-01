@@ -1,6 +1,9 @@
 import json
 import os
 import re
+import threading
+import time
+from datetime import date
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -25,6 +28,27 @@ FIREWORKS_HEADERS = {
     "Authorization": f"Bearer {api_key}",
     "Content-Type": "application/json",
 }
+
+# A ceiling on Fireworks calls per day across ALL visitors. The per-IP limits
+# in app.py stop one client hammering the endpoint; this stops a crowd (or a
+# botnet) running up the bill. Counted in memory, which is exact for the
+# single gunicorn worker this app runs; the count resets on restart.
+LLM_DAILY_CAP = int(os.getenv("LLM_DAILY_CAP", "2000"))
+_budget = {"day": None, "used": 0}
+_budget_lock = threading.Lock()
+
+
+def take_llm_call():
+    """Reserve one call from today's budget; False once it is spent."""
+    today = date.today().isoformat()
+    with _budget_lock:
+        if _budget["day"] != today:
+            _budget["day"], _budget["used"] = today, 0
+        if _budget["used"] >= LLM_DAILY_CAP:
+            return False
+        _budget["used"] += 1
+        return True
+
 
 session = requests.Session()
 session.headers.update({"Connection": "keep-alive"})
@@ -134,6 +158,7 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
 
         Student Query: "{query_text}"
             """.strip()
+    started = time.monotonic()
     try:
         response = session.post(
             FIREWORKS_URL,
@@ -154,7 +179,13 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
         )
         response.raise_for_status()
 
-        raw = response.json()["choices"][0]["message"]["content"]
+        body = response.json()
+        usage = body.get("usage") or {}
+        # One greppable line per call (`fly logs | grep llm_call`) so cost and
+        # latency can be read off the logs without a dashboard.
+        print(f"llm_call status=ok ms={int((time.monotonic() - started) * 1000)} "
+              f"in_tok={usage.get('prompt_tokens')} out_tok={usage.get('completion_tokens')}")
+        raw = body["choices"][0]["message"]["content"]
         print(f"[DEBUG] Fireworks raw output:\n{raw}")
 
         parsed = json.loads(raw)
@@ -192,6 +223,8 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
         )
 
     except Exception as e:
+        print(f"llm_call status=error ms={int((time.monotonic() - started) * 1000)} "
+              f"error={type(e).__name__}")
         print(f"Fireworks parsing failed: {e}")
         # Always return exactly six elements:
         return ("generate", "", "", "", 5, "")

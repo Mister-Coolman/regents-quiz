@@ -6,8 +6,18 @@ and the rest is released per question by /api/check once an answer is in.
 """
 import re
 
-# Fields a student may not see before answering.
+# The only question fields that reach the browser before an attempt. An
+# allowlist, so a column added to the table later (question text, standards,
+# rubric ids...) stays on the server until someone decides to send it.
+PUBLIC_FIELDS = (
+    "id", "subject", "topic", "month", "year", "type",
+    "question_image_path", "question_no",
+)
+
+# Fields a student may not see before answering. A second check on top of the
+# allowlist: none of these may ever be added to PUBLIC_FIELDS.
 HIDDEN_FIELDS = ("correct_answer", "explanation", "rubric")
+assert not set(PUBLIC_FIELDS) & set(HIDDEN_FIELDS)
 
 # Explanations are generated in a fixed four-section shape (enforced by the
 # validator in scripts/fireworks_explanations.py):
@@ -59,7 +69,7 @@ def build_hints(explanation):
 
 def public_question(q):
     """The question as the browser may see it before an answer is submitted."""
-    out = {k: v for k, v in q.items() if k not in HIDDEN_FIELDS}
+    out = {k: q[k] for k in PUBLIC_FIELDS if k in q}
     out["hints"] = build_hints(q.get("explanation"))
     return out
 

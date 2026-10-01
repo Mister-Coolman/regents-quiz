@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import MathText from './MathText';
-import Confetti from './Confetti';
 import SubjectMark from './SubjectMark';
 import ScoreDial from './ScoreDial';
 import styles from '../styles/QuizPlayer.module.css';
@@ -183,7 +182,6 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
     const perfect = graded.length > 0 && score === graded.length;
     return (
       <div className={styles.quiz}>
-        {perfect && <Confetti />}
         <div className={styles.topbar}>
           <button onClick={onFinish} className={styles.backBtn}>
             <span aria-hidden="true">‹</span> Chat

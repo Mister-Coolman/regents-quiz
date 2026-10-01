@@ -65,8 +65,25 @@ Live at **https://nystateregentsprep.netlify.app/**
 cd backend
 pip install -r requirements.txt
 # create a .env with FIREWORKS_API_KEY and any other secrets llm_client.py expects
+python migrate.py      # bring regentsqs.db to the schema the code expects
 python app.py
 ```
+
+The app refuses to start on a database older than `db.SCHEMA_VERSION`.
+Schema changes go in a new numbered file in `backend/migrations/` and are
+applied offline with `python migrate.py`, never at app start.
+
+Tests (they need `backend/regentsqs.db`, which isn't in git, and never call
+the LLM):
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+`tests/golden_math.json` fingerprints what the API sends and how it grades
+every question. After an intentional change, check it and run
+`python -m tests.golden --update`.
 
 ### Frontend
 
@@ -102,11 +119,11 @@ https://nystateregentsprep.netlify.app/
 ### Backend (Flask + SQLite)
 
 Hosted on **Fly.io** (`fly.toml`, app `backend-winter-smoke-307`).
-Deploy with:
+Deploy with the release script, which checks, backs up, deploys and smoke
+tests (see [RELEASE.md](RELEASE.md)):
 
 ```bash
-cd backend
-fly deploy
+scripts/release.sh
 ```
 
 The SQLite database ships inside the built image — pushing to git alone does

@@ -17,10 +17,14 @@ load_dotenv()
 
 import db
 from answers import check_answer, public_question
-from llm_client import parse_query_with_ollama, clean_topic
+from llm_client import clean_topic, parse_query_with_ollama, take_llm_call
 from pdf_utils import generate_pdf, pdf_filename
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
+
+# Every request body here is a short JSON object; refuse anything larger
+# before it is parsed (Flask answers 413).
+app.config["MAX_CONTENT_LENGTH"] = 64 * 1024
 
 # No cookies or auth headers are used, so credentials stay off.
 CORS(app, resources={r"/api/*": {"origins": [
@@ -60,7 +64,14 @@ def valid_session_id(sid):
 def security_headers(resp):
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # The API and its PDFs are not pages to index; the Netlify site is.
+    resp.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
     return resp
+
+
+@app.errorhandler(413)
+def too_large(e):
+    return jsonify({"error": "That request is too large."}), 413
 
 
 @app.errorhandler(429)
@@ -71,6 +82,11 @@ IMG_DIR = os.path.join(app.static_folder, 'images')
 
 # Guards the download endpoint against absurdly long id lists.
 MAX_PDF_QUESTIONS = 50
+# Printable sets exist for these subjects only. ELA passages are reproduced
+# in-app under a takedown policy and must not be packaged as PDFs.
+PDF_SUBJECTS = {"Algebra I", "Geometry", "Algebra II"}
+
+PAUSED_MESSAGE = "Practice sets are paused for today because of heavy use. Try again tomorrow."
 
 db.init_db()
 
@@ -79,6 +95,27 @@ db.init_db()
 @limiter.exempt
 def healthz():
     return {"status": "alive"}, 200
+
+
+@app.get("/readyz")
+@limiter.exempt
+def readyz():
+    """Is the question bank usable? For the release smoke test and an
+    outside uptime monitor. Makes no LLM call."""
+    conn = db.get_conn()
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
+    counts = dict(conn.execute("SELECT subject, COUNT(*) FROM questions GROUP BY subject").fetchall())
+    sample = conn.execute("SELECT question_image_path FROM questions LIMIT 1").fetchone()
+    conn.close()
+    image_ok = bool(sample) and os.path.isfile(os.path.join(app.static_folder, sample[0]))
+    ok = version >= db.SCHEMA_VERSION and sum(counts.values()) > 0 and image_ok
+    return jsonify({
+        "ok": ok,
+        "schema_version": version,
+        "questions": counts,
+        "images": image_ok,
+        "llm_key": bool(os.getenv("FIREWORKS_API_KEY")),
+    }), (200 if ok else 503)
 
 
 def help_response():
@@ -165,6 +202,10 @@ def query():
     if not user_query or user_query.lower() in {"help", "how do i ask", "show me examples"}:
         print("[INFO] Help response triggered")
         return help_response()
+
+    if not take_llm_call():
+        print("[WARN] daily LLM cap reached; refusing query")
+        return jsonify({"response": PAUSED_MESSAGE})
 
     last_query = db.get_last_query(sess_id)
     intent, subject, topic, qtype, limit, reply = parse_query_with_ollama(user_query, last_query)
@@ -294,6 +335,8 @@ def download():
     questions = db.fetch_questions_by_ids(ids)
     if not questions:
         return jsonify({"error": "no matching questions"}), 404
+    if any(q["subject"] not in PDF_SUBJECTS for q in questions):
+        return jsonify({"error": "PDFs are only available for math practice sets."}), 400
 
     pdf_bytes = generate_pdf(questions)
     return send_file(

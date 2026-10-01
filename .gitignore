@@ -34,3 +34,11 @@ __pycache__/
 # Question-number backfill outputs (regenerate with the two scripts)
 /scripts/question_numbers_*.csv
 /scripts/question_numbers_vlm_cache.json
+
+# ELA pipeline output. The repo is public and most ELA passages are
+# third-party copyrighted text: passages and the figures inside them must
+# never be committed. (ELA question crops are NYSED material and may be.)
+/scripts/ela_*/
+/scripts/*passage*
+*.stimuli.json
+/backend/static/stimuli/

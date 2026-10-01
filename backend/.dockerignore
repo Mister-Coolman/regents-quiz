@@ -12,3 +12,13 @@ pdfs/
 # Local DB backups (the live regentsqs.db IS shipped in the image -- do not
 # exclude it, the app reads questions from it at runtime)
 *.db.bak-*
+
+# Never needed in the image (and kept out of the build context so builds
+# upload less): the local virtualenv, tests, migrations (they run offline,
+# before the build), and scratch files.
+venv/
+tests/
+migrations/
+pytest.ini
+requirements-dev.txt
+*.db-journal

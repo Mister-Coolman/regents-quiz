@@ -1,12 +1,16 @@
 FROM python:3.11-slim AS base
 
-# System deps (no recommends = smaller)
+# System deps (no recommends = smaller). Everything in requirements.txt is
+# pure Python, so no compiler, image or OCR libraries: those belonged to the
+# offline extraction pipeline in scripts/, which never runs in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc \
-    libgl1 libglib2.0-0 libjpeg-dev \
-    tesseract-ocr \
-    curl ca-certificates tini \
+    ca-certificates tini \
  && rm -rf /var/lib/apt/lists/*
+
+# Print straight to the log: without this, Python buffers stdout when it isn't
+# a terminal and the app's log lines (llm_call cost lines included) only
+# reach `fly logs` in late batches, or never if the machine stops.
+ENV PYTHONUNBUFFERED=1
 
 # Create app dir & user
 WORKDIR /app
@@ -28,7 +32,10 @@ COPY static/ ./static/
 COPY regentsqs.db ./
 
 # Application code last: this is what actually changes between deploys.
-COPY . .
+# Copy only the modules. `COPY . .` here used to re-copy static/ and the
+# local venv/ into this layer, so every code deploy re-pushed ~200 MB and
+# the cached layers above saved nothing.
+COPY *.py ./
 
 # (Optional) If you serve any static assets, ensure readable perms
 RUN chown -R appuser:appuser /app

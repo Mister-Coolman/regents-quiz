@@ -10,77 +10,27 @@ def get_conn():
     return sqlite3.connect(DB_PATH)
 
 
+# The schema version this code expects (PRAGMA user_version). Migrations run
+# offline with `python migrate.py`; see that file for why.
+SCHEMA_VERSION = 1
+
+
+class SchemaTooOld(RuntimeError):
+    pass
+
+
 def init_db():
+    """Refuse to start on a database older than the code. Under gunicorn
+    --preload the app then never boots, the Fly health check fails, and the
+    previous release keeps serving."""
     conn = get_conn()
-    cursor = conn.cursor()
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS questions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        subject TEXT NOT NULL,
-        topic TEXT NOT NULL,
-        month TEXT NOT NULL,
-        year INTEGER NOT NULL,
-        type TEXT NOT NULL,
-        question_image_path TEXT NOT NULL,
-        correct_answer TEXT,
-        explanation TEXT,
-        rubric TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-    """)
-    existing_question_cols = {row[1] for row in cursor.execute("PRAGMA table_info(questions)")}
-    if "rubric" not in existing_question_cols:
-        cursor.execute("ALTER TABLE questions ADD COLUMN rubric TEXT")
-    # The question's number on its original exam, backfilled from the exam
-    # PDFs by scripts/backfill_question_numbers.py. NULL where unreadable.
-    if "question_no" not in existing_question_cols:
-        cursor.execute("ALTER TABLE questions ADD COLUMN question_no INTEGER")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS sessions (
-        session_id   TEXT PRIMARY KEY,
-        started_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_active  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_subject TEXT,
-        last_topic   TEXT,
-        last_type    TEXT,
-        last_limit   INTEGER
-    );
-    """)
-    existing_cols = {row[1] for row in cursor.execute("PRAGMA table_info(sessions)")}
-    for col, decl in (
-        ("last_subject", "TEXT"),
-        ("last_topic", "TEXT"),
-        ("last_type", "TEXT"),
-        ("last_limit", "INTEGER"),
-    ):
-        if col not in existing_cols:
-            cursor.execute(f"ALTER TABLE sessions ADD COLUMN {col} {decl}")
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS session_messages (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id   TEXT    NOT NULL,
-        sender       TEXT    NOT NULL,
-        text         TEXT    NOT NULL,
-        created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(session_id) REFERENCES sessions(session_id)
-            ON DELETE CASCADE
-        );
-    """)
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS session_questions (
-        session_id    TEXT    NOT NULL,
-        message_idx   INTEGER NOT NULL,
-        question_idx  INTEGER NOT NULL,
-        question_id   INTEGER NOT NULL,
-        question_data TEXT    NOT NULL,
-        PRIMARY KEY (session_id, message_idx, question_idx),
-        FOREIGN KEY (session_id, message_idx)
-            REFERENCES session_messages(session_id, id)
-            ON DELETE CASCADE
-    );
-    """)
-    conn.commit()
+    version = conn.execute("PRAGMA user_version").fetchone()[0]
     conn.close()
+    if version < SCHEMA_VERSION:
+        raise SchemaTooOld(
+            f"{DB_PATH} is at schema version {version}, this code needs {SCHEMA_VERSION}. "
+            f"Run `python migrate.py` before deploying."
+        )
 
 
 def touch_session(sess_id):
@@ -249,7 +199,10 @@ def save_exchange(sess_id, user_query, bot_resp, questions):
             bot_msg_id,
             i,
             q["id"],
-            json.dumps(q, ensure_ascii=False)
+            # Only the id: the row (with its answer) stays in `questions`, and
+            # history rebuilds from there. Copying the full row duplicated
+            # every answer into the session tables.
+            json.dumps({"id": q["id"]})
         ))
 
     conn.commit()
@@ -258,31 +211,33 @@ def save_exchange(sess_id, user_query, bot_resp, questions):
 
 
 def get_history(session_id):
+    """Messages in order, each with the questions it served, in the order they
+    were served. Questions are read from `questions` by id, so a row removed
+    from the bank simply drops out of old history."""
     conn = get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
 
     cur.execute("""
-      SELECT
-        sm.id        AS id,
-        sm.sender    AS sender,
-        sm.text      AS text,
-        GROUP_CONCAT(sq.question_data, '||') AS questions_concat
-      FROM session_messages sm
-      LEFT JOIN session_questions sq
-        ON sm.session_id = sq.session_id
-       AND sm.id         = sq.message_idx
-      WHERE sm.session_id = ?
-      GROUP BY sm.id
-      ORDER BY sm.created_at
+      SELECT id, sender, text FROM session_messages
+      WHERE session_id = ?
+      ORDER BY created_at, id
     """, (session_id,))
+    rows = [dict(r, questions=[]) for r in cur.fetchall()]
+    by_id = {r["id"]: r for r in rows}
 
-    rows = []
+    cur.execute("""
+      SELECT sq.message_idx, q.*
+      FROM session_questions sq
+      JOIN questions q ON q.id = sq.question_id
+      WHERE sq.session_id = ?
+      ORDER BY sq.message_idx, sq.question_idx
+    """, (session_id,))
     for r in cur.fetchall():
-        row = dict(r)
-        qc = row.pop('questions_concat')
-        row['questions'] = [json.loads(q) for q in (qc.split('||') if qc else [])]
-        rows.append(row)
+        q = dict(r)
+        msg = by_id.get(q.pop("message_idx"))
+        if msg is not None:
+            msg["questions"].append(q)
 
     conn.close()
     return rows
