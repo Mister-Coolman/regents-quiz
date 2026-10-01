@@ -39,8 +39,9 @@ indented printed line. Bundles written by ela_extract.py are translated into
 this shape first (from_extractor).
 "n" is the printed line number for every line of a numbered passage (null
 for unnumbered lines such as a title inside the text). "line_refs" is
-optional: when present it must equal what parse_line_refs reads from the
-stem, and when absent it is filled from the stem.
+optional: when present it is used as given (a difference from what
+parse_line_refs reads in the stem is printed as a warning), and when absent
+it is filled from the stem.
 """
 import argparse
 import json
@@ -174,9 +175,11 @@ def _texts(bundle):
             yield f"question {q['question_no']} alt text", q["alt_text"]
 
 
-def check_bundle(bundle, bundle_dir, allow_partial=False):
-    """The hard gates. Returns a list of errors; empty means importable."""
+def check_bundle(bundle, bundle_dir, allow_partial=False, warnings=None):
+    """The hard gates. Returns a list of errors; empty means importable.
+    Things worth a look that don't block go into `warnings` if given."""
     errors = []
+    warnings = [] if warnings is None else warnings
     exam = bundle.get("exam") or {}
     if exam.get("subject") != ELA_SUBJECT:
         errors.append(f"exam subject must be {ELA_SUBJECT}")
@@ -228,7 +231,11 @@ def check_bundle(bundle, bundle_dir, allow_partial=False):
         parsed = parse_line_refs(q.get("question_text"))
         given = merge_ranges([tuple(r) for r in q["line_refs"]]) if q.get("line_refs") is not None else parsed
         if given != parsed:
-            errors.append(f"{tag}: line_refs {given} differ from the stem's {parsed}")
+            # The extractor's refs win: it also resolves "the second stanza"
+            # and similar, which this simple parser doesn't. Worth a look,
+            # since a missed ref means lines that won't be highlighted.
+            warnings.append(f"{tag}: line_refs {given}, but the stem reads as {parsed}: "
+                            f"\"{(q.get('question_text') or '')[:90]}\"")
         for start, end in given:
             if start > end:
                 errors.append(f"{tag}: line range {start}-{end} runs backwards")
@@ -355,7 +362,10 @@ def main():
     bundle = from_extractor(raw)
     for fig in bundle.get("figures") or []:
         print(f"[import] not imported: figure in passage {fig.get('passage')} on page {fig.get('page')}")
-    errors = check_bundle(bundle, bundle_dir, args.allow_partial)
+    warnings = []
+    errors = check_bundle(bundle, bundle_dir, args.allow_partial, warnings)
+    for w in warnings:
+        print(f"[check] {w}")
     for e in errors:
         print(f"[gate] {e}")
     if errors:

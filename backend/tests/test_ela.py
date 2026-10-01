@@ -82,7 +82,11 @@ def test_bundle_gates(tmp_path):
     assert broken(lambda b: b["stimuli"][0]["lines"][3].update(text="a || b"))
     assert broken(lambda b: b["stimuli"][0]["lines"][3].update(n=40))           # not monotonic
     assert broken(lambda b: b["questions"][0].update(question_text="In lines 30 through 31, the"))
-    assert broken(lambda b: b["questions"][0].update(line_refs=[[1, 2]]))         # differs from stem
+    warnings = []
+    b = copy.deepcopy(bundle)
+    b["questions"][0]["line_refs"] = [[1, 2]]                                       # differs from stem
+    assert ela_import.check_bundle(b, str(tmp_path), allow_partial=True, warnings=warnings) == []
+    assert warnings and "stem reads as" in warnings[0]
     assert broken(lambda b: b["questions"][0].update(correct_answer="5"))
     assert broken(lambda b: b["questions"][0].update(choices=["a", "b", "c"]))
     assert broken(lambda b: b["questions"][0].update(image="crops/missing.png"))
