@@ -21,6 +21,7 @@ __pycache__/
 /scripts/models/
 /scripts/*.log
 /scripts/*_review.html
+/scripts/*_review.json
 /scripts/transcripts_cache.json
 /scripts/sample_explanations.json
 

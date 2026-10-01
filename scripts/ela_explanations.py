@@ -18,7 +18,8 @@ Theme and "best supports" questions are flagged in the review report: a
 person reads every one of those before release.
 
   python scripts/ela_explanations.py --exam 626 --dry-run   # report only
-  python scripts/ela_explanations.py --exam 626             # write passing ones
+  python scripts/ela_explanations.py --apply                # save what that report showed
+  python scripts/ela_explanations.py --exam 626             # generate and save in one go
   python scripts/ela_explanations.py --id 1812 --regenerate
 """
 import argparse
@@ -203,6 +204,33 @@ def write_report(path, results):
         f.write("\n".join(parts))
 
 
+def apply_saved(db_path, results_path):
+    """Store the passing explanations from the last run, re-checked against
+    the database as it is now."""
+    with open(results_path) as f:
+        results = json.load(f)
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    saved = skipped = 0
+    for r in results:
+        if not r["content"]:
+            continue
+        row = conn.execute("""SELECT q.correct_answer, s.lines FROM questions q
+                              JOIN question_stimuli qs ON qs.question_id = q.id
+                              JOIN stimuli s ON s.id = qs.stimulus_id WHERE q.id = ?""", (r["id"],)).fetchone()
+        numbers = {line["n"] for line in json.loads(row["lines"]) if line.get("n") is not None} if row else set()
+        why = ["question not found"] if not row else problems(r["content"], row["correct_answer"], numbers)
+        if why:
+            print(f"[apply] id {r['id']} q{r['no']}: not saved, {'; '.join(why)}")
+            skipped += 1
+            continue
+        conn.execute("UPDATE questions SET explanation = ? WHERE id = ?", (r["content"], r["id"]))
+        saved += 1
+    conn.commit()
+    conn.close()
+    print(f"[apply] saved {saved} explanations from {results_path}" + (f", skipped {skipped}" if skipped else ""))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=DB_PATH)
@@ -211,7 +239,15 @@ def main():
     parser.add_argument("--regenerate", action="store_true", help="also redo questions that have one")
     parser.add_argument("--dry-run", action="store_true", help="write the report, not the database")
     parser.add_argument("--report", default=os.path.join(BASE_DIR, "ela_explanations_review.html"))
+    parser.add_argument("--apply", action="store_true",
+                        help="save the explanations from the last run's report, without calling the model")
     args = parser.parse_args()
+    # Every run saves its results beside the report, so what was reviewed is
+    # exactly what --apply stores (a new call would write different text).
+    results_path = os.path.splitext(args.report)[0] + ".json"
+    if args.apply:
+        apply_saved(args.db, results_path)
+        return
     if not API_KEY:
         sys.exit("FIREWORKS_API_KEY is not set (backend/.env)")
 
@@ -232,6 +268,8 @@ def main():
             conn.commit()
     conn.close()
     write_report(args.report, results)
+    with open(results_path, "w") as f:
+        json.dump(results, f, ensure_ascii=False, indent=1)
     print(f"[done] {sum(1 for r in results if r['content'])}/{len(results)} passed in {time.time() - t0:.0f}s; "
           f"tokens in {usage['prompt_tokens']} out {usage['completion_tokens']}; report {args.report}")
 
