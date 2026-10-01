@@ -22,10 +22,14 @@ Live at **https://nystateregentsprep.netlify.app/**
     localStorage, so closing and reopening a quiz resumes where you left off
   - A review screen at the end listing every missed question with its
     explanation
-  - Confetti on a perfect score
 - Math rendered with KaTeX (via `react-markdown` + `remark-math` +
   `rehype-katex`), so explanations with equations render properly
-- PDF export of a practice set
+- PDF export of a math practice set
+- English Language Arts (ELA) Part 1 reading practice, behind the
+  `ELA_ENABLED` flag: whole passage sets (a passage and every question about
+  it) in a side-by-side reader with printed line numbers and the cited lines
+  highlighted. No PDF for ELA. See RELEASE.md for adding exams and the kill
+  switches.
 - Natural-language query parsing (e.g. "10 Algebra I MCQs on Systems of
   Equations") backed by Fireworks AI's DeepSeek V4.1 Flash, used to build a practice set from a
   free-text request

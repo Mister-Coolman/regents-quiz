@@ -15,6 +15,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 load_dotenv()
 
+import config
 import db
 from answers import check_answer, public_question
 from llm_client import clean_topic, parse_query_with_ollama, take_llm_call
@@ -87,6 +88,9 @@ MAX_PDF_QUESTIONS = 50
 PDF_SUBJECTS = {"Algebra I", "Geometry", "Algebra II"}
 
 PAUSED_MESSAGE = "Practice sets are paused for today because of heavy use. Try again tomorrow."
+ELA_LABEL = "English Language Arts (ELA)"
+ELA_UNAVAILABLE = ("English Language Arts practice isn't available here yet. I can make practice sets "
+                   "for Algebra I, Geometry and Algebra II.")
 
 db.init_db()
 
@@ -115,23 +119,89 @@ def readyz():
         "questions": counts,
         "images": image_ok,
         "llm_key": bool(os.getenv("FIREWORKS_API_KEY")),
+        "ela_enabled": config.ELA_ENABLED,
+        "withdrawn_stimuli": sorted(config.WITHDRAWN_STIMULI),
     }), (200 if ok else 503)
 
 
+@app.get("/api/features")
+@limiter.limit("60 per minute")
+def features():
+    """What the frontend should offer. Lets one secret (ELA_ENABLED) switch
+    ELA on or off in the API and the welcome screen together."""
+    return jsonify({"ela": config.ELA_ENABLED})
+
+
 def help_response():
-    help_text = """
+    if config.ELA_ENABLED:
+        subjects = f"Algebra I, Geometry, Algebra II and {ELA_LABEL}"
+        ela_item = "<li><b>Read a passage</b>, like “Give me an ELA passage”</li>"
+        ela_note = (" English Language Arts comes as a whole passage set: the passage and every "
+                    "question about it, as on Part 1 of the exam. Those sets have no PDF.")
+    else:
+        subjects, ela_item, ela_note = "Algebra I, Geometry and Algebra II", "", ""
+    help_text = f"""
     <b>What you can ask</b><br>
-    I have past questions for Algebra I, Geometry and Algebra II. Ask me to:
+    I have past questions for {subjects}. Ask me to:
     <ul>
       <li><b>List topics</b>, like “List Algebra I topics”</li>
       <li><b>Count questions</b>, like “How many MCQs on one-variable equations?”</li>
       <li><b>Make a practice set</b>, like “Give me 5 Algebra I MCQs on interpreting functions”</li>
+      {ela_item}
     </ul>
     <hr>
-    Each practice set comes with a PDF to download and a quiz you can take right here.
-    MCQ means multiple choice; CRQ means constructed response, where you write the answer.
+    Each math practice set comes with a PDF to download and a quiz you can take right here.
+    MCQ means multiple choice; CRQ means constructed response, where you write the answer.{ela_note}
     """
     return jsonify({"response": help_text})
+
+
+def ela_response(sess_id, user_query, intent, qtype, limit, reply):
+    """Every ELA request. ELA is served only as whole passage sets, with no
+    topics (they wait for topic drills) and no PDF."""
+    if not config.ELA_ENABLED:
+        return jsonify({"response": ELA_UNAVAILABLE})
+
+    sets, total = db.count_ela()
+    if intent in ("list_topics", "count_questions"):
+        if not sets:
+            return jsonify({"response": "No English Language Arts passages are ready yet."})
+        return jsonify({"response": (
+            f"English Language Arts practice comes as whole passage sets: a passage and every "
+            f"question about it, as on Part 1 of the exam. There are <b>{sets}</b> passage sets "
+            f"with <b>{total}</b> questions. Ask for “an ELA passage” to start one.")})
+
+    if qtype and qtype != "MCQ":
+        return jsonify({"response": (
+            "For English Language Arts I have the Part 1 reading questions, which are multiple "
+            "choice. Ask for “an ELA passage” to get a set.")})
+
+    # The parser counts about 10 questions per passage ("2 passages" -> 20).
+    stimuli, questions = db.fetch_ela_sets(max(1, round(limit / 10)), MAX_QUIZ_QUESTIONS, sess_id)
+    if not questions:
+        return jsonify({"response": "No English Language Arts passages are ready yet."})
+
+    def describe(s):
+        title = f"“{escape(s['title'])}”" if s.get("title") else f"Passage {escape(s['label'])}"
+        by = f" by {escape(s['author'])}" if s.get("author") else ""
+        return f"{title}{by}, from the {escape(s['month'])} {s['year']} exam"
+
+    n = len(questions)
+    if len(stimuli) == 1:
+        facts = f"One passage set: {describe(stimuli[0])}, with {n} question{'s' if n != 1 else ''}."
+    else:
+        items = "".join(f"<li>{describe(s)}</li>" for s in stimuli)
+        facts = f"{len(stimuli)} passage sets with {n} questions:<ul style='margin-top:0.5rem'>{items}</ul>"
+    facts += " Read the passage, then answer the questions about it."
+    opener = safe_reply(reply, n)
+    bot_resp = f"{escape(opener)}<br><br>{facts}" if opener else facts
+
+    db.save_exchange(sess_id, user_query, bot_resp, questions)
+    return jsonify({
+        "response": bot_resp,
+        "questions": [public_question(q) for q in questions],
+        "stimuli": stimuli,
+    })
 
 
 # A count the model wrote next to a question word, e.g. "here are 5 questions".
@@ -221,8 +291,14 @@ def query():
     if intent == "chitchat":
         return jsonify({"response": escape(reply) if reply else help_response().get_json()["response"]})
 
+    if subject == db.ELA_SUBJECT:
+        return ela_response(sess_id, user_query, intent, qtype, limit, reply)
+
     if intent == "list_topics":
         if not subject:
+            if config.ELA_ENABLED:
+                return jsonify({"response": "I can list topics for Algebra I, Algebra II or Geometry, "
+                                            "or tell you about English Language Arts practice. Which one?"})
             return jsonify({"response": "I can list topics for Algebra I, Algebra II or Geometry. Which one?"})
         topics = db.list_topics(subject)
         if topics:
@@ -356,6 +432,8 @@ def history(session_id):
     rows = db.get_history(session_id)
     for row in rows:
         row["questions"] = [public_question(q) for q in row["questions"]]
+    # ELA rows also carry "stimuli": the passages for sets served to this
+    # session, already reduced to what the reader shows.
     return jsonify(rows)
 
 

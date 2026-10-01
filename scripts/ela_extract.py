@@ -1,0 +1,582 @@
+"""Extract Part 1 (reading comprehension) of an ELA Regents exam.
+
+For each passage: its printed lines with their printed line numbers,
+paragraph/stanza breaks, italics, footnote markers and glosses, and the
+attribution exactly as printed. For each question: an image crop (the
+student-facing display), the stem and choices as text (internal only: line
+references, explanations, alt text), the answer key, the learning standard,
+and the passage lines the stem cites.
+
+Everything is read from the PDF's text layer by position; nothing is OCR'd.
+Hard gates stop the run if anything doesn't add up (see `gate`), and a review
+page puts every passage next to its page images for a human check.
+
+The output contains third-party copyrighted passage text, so it goes to
+scripts/ela_out/ (git-ignored; the repo is public). Never move it into a
+tracked path.
+
+Usage (run from scripts/):
+  python ela_extract.py 626          # June 2026 -> ela_out/626/
+"""
+import argparse
+import html
+import json
+import os
+import re
+import sys
+import zipfile
+from xml.etree import ElementTree
+
+import numpy as np
+import pymupdf as fitz
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PDF_DIR = os.path.join(BASE_DIR, "pdfs", "ela")
+OUT_DIR = os.path.join(BASE_DIR, "ela_out")
+MAPS_PATH = os.path.join(BASE_DIR, "..", "docs", "ela", "research", "maps.json")
+
+EXAMS = {
+    "626": {"month": "June", "year": 2026, "stem": "reela-62026"},
+}
+
+BODY_SIZE = 11.5          # passage and question text
+HEADING_SIZE = 14.0       # "Reading Comprehension Passage A" and titles
+FOOTNOTE_MAX_SIZE = 8.5   # glosses at the foot of the page
+FOOTER_TOP = 740          # running footer: "Regents Exam in ELA ... [3] [OVER]"
+LINE_NO_MAX_X = 60        # printed line numbers sit in the left margin
+COLUMN_SPLIT = 306        # question pages are two columns (612 pt wide)
+QUESTION_NO_X = (42, 318) # x of question numbers in each column
+CROP_DPI = 150
+SUPERSCRIPT_MAX_SIZE = 9  # footnote markers inside body text
+NUM_RE = re.compile(r"^\s*(\d{1,2})\s+\S")
+CHOICE_RE = re.compile(r"^\(([1-4])\)\s*")
+ORDINALS = ["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth"]
+
+
+# ---------------------------------------------------------------- text layer
+
+class Line:
+    """One printed line: its text, position, italic ranges and the footnote
+    markers inside it (as character offsets into `text`)."""
+
+    def __init__(self, page, bbox, size, runs):
+        self.page = page
+        self.x0, self.y0, self.x1, self.y1 = bbox
+        self.size = size
+        text, italic, notes = "", [], []
+        for run_text, is_italic, is_super in runs:
+            if is_super and run_text.strip().isdigit():
+                notes.append({"n": int(run_text.strip()), "at": len(text.rstrip())})
+                continue
+            if is_italic and run_text.strip():
+                italic.append([len(text), len(text) + len(run_text)])
+            text += run_text
+        self.text = text.rstrip()
+        self.italic = [[a, min(b, len(self.text))] for a, b in italic if a < len(self.text)]
+        self.notes = notes
+
+    def __repr__(self):
+        return f"<p{self.page} {self.x0:.0f},{self.y0:.0f} {self.text[:40]!r}>"
+
+
+def page_lines(page, pno):
+    """Lines rebuilt from characters. PyMuPDF inserts a space after every
+    ligature glyph ("fi guring", "infl uences"); those spaces overlap the
+    glyph before them, while real spaces start after it, so overlapping spaces
+    are dropped."""
+    out = []
+    for block in page.get_text("rawdict")["blocks"]:
+        for line in block.get("lines", []):
+            runs, size, prev_x1 = [], None, None
+            for span in line["spans"]:
+                chars = []
+                for c in span["chars"]:
+                    if c["c"] == " " and prev_x1 is not None and c["bbox"][0] < prev_x1 - 0.5:
+                        continue
+                    chars.append(c["c"])
+                    if c["c"] != " ":
+                        prev_x1 = c["bbox"][2]
+                if not chars:
+                    continue
+                is_super = span["size"] < SUPERSCRIPT_MAX_SIZE and line["spans"][0]["size"] >= 10
+                runs.append(("".join(chars), bool(span["flags"] & 2), is_super))
+                if not is_super and size is None:
+                    size = round(span["size"], 1)
+            if runs and "".join(r[0] for r in runs).strip():
+                out.append(Line(pno, line["bbox"], size or 0, runs))
+    out.sort(key=lambda l: (round(l.y0), l.x0))
+    return [l for l in out if l.y0 < FOOTER_TOP]
+
+
+# ---------------------------------------------------------------- passages
+
+def join_title(lines):
+    out = ""
+    for l in lines:
+        t = l.text.strip()
+        out += t if (not out or out.endswith("—") or t.startswith("—")) else " " + t
+    return out
+
+
+def parse_footnotes(lines):
+    """Glosses like '2transient — passing or temporary', possibly wrapped."""
+    notes = []
+    for l in lines:
+        m = re.match(r"^(\d+)\s*(.+)$", l.text.strip())
+        if m and " — " in m.group(2):
+            term, gloss = m.group(2).split(" — ", 1)
+            notes.append({"n": int(m.group(1)), "term": term.strip(), "gloss": gloss.strip()})
+        elif notes:
+            notes[-1]["gloss"] += " " + l.text.strip()
+    return notes
+
+
+def extract_passages(doc, part1_pages):
+    """Walk Part 1 page by page, splitting it into passages and question areas."""
+    passages, questions_area = [], []
+    cur, state = None, "intro"
+    for pno in part1_pages:
+        lines = page_lines(doc[pno], pno)
+        for l in lines:
+            t = l.text.strip()
+            if l.size == HEADING_SIZE and t.startswith("Reading Comprehension Passage"):
+                cur = {"label": t.rsplit(" ", 1)[-1], "heading": [], "body": [], "numbers": [],
+                       "foot": [], "attribution": [], "pages": [pno], "questions_area": []}
+                passages.append(cur)
+                state = "title"
+                continue
+            if cur is None:
+                continue
+            if pno not in cur["pages"]:
+                cur["pages"].append(pno)
+            if l.size <= FOOTNOTE_MAX_SIZE:
+                cur["foot"].append(l)
+                continue
+            if state == "title":
+                if l.size == HEADING_SIZE:
+                    cur["heading"].append(l)
+                    continue
+                state = "body"
+            if state == "body":
+                if l.x0 < LINE_NO_MAX_X and t.isdigit():
+                    cur["numbers"].append(l)
+                    continue
+                if l.x0 > 300 and t.startswith("—"):
+                    state = "attribution"
+                else:
+                    cur["body"].append(l)
+                    continue
+            if state == "attribution":
+                if l.x0 > 300 and (not cur["attribution"] or l.y0 - cur["attribution"][-1].y0 < 20):
+                    cur["attribution"].append(l)
+                    continue
+                state = "questions"
+            if state == "questions":
+                cur["questions_area"].append(l)
+    return passages
+
+
+def build_stimulus(p):
+    """Number the body lines and check them against the printed numbers."""
+    body = p["body"]
+    lines, prev = [], None
+    for idx, l in enumerate(body, start=1):
+        gap = prev is not None and l.page == prev.page and l.y0 - prev.y0 > 20
+        lines.append({
+            "n": idx,
+            "text": l.text,
+            "indent": l.x0 > 80,              # first line of a prose paragraph
+            "gap_before": bool(gap),          # stanza break or section break
+            "italic": l.italic,
+            "notes": l.notes,
+            "page": l.page,
+            "y": round(l.y0, 1),
+        })
+        prev = l
+    mismatches = []
+    for num in p["numbers"]:
+        same_row = [ln for ln, b in zip(lines, body) if b.page == num.page and abs(b.y0 - num.y0) < 4]
+        if len(same_row) != 1 or same_row[0]["n"] != int(num.text):
+            mismatches.append(f"printed {num.text} on page {num.page} y={num.y0:.0f} "
+                              f"matches {[x['n'] for x in same_row]}")
+    title_line = p["heading"]
+    title_notes = [n for l in title_line for n in l.notes]
+    kind = {"A": "literary", "B": "poem", "C": "informational"}.get(p["label"], "unknown")
+    return {
+        "label": p["label"],
+        "kind": kind,
+        "title": join_title(title_line),
+        "title_notes": title_notes,
+        "lines": lines,
+        "line_count": len(lines),
+        "printed_numbers": [int(n.text) for n in p["numbers"]],
+        "attribution": [{"text": l.text.strip(),
+                         "italic": [[a - (len(l.text) - len(l.text.lstrip())), b - (len(l.text) - len(l.text.lstrip()))]
+                                    for a, b in l.italic]}
+                        for l in p["attribution"]],
+        "footnotes": parse_footnotes(p["foot"]),
+        "pages": p["pages"],
+    }, mismatches
+
+
+# ---------------------------------------------------------------- questions
+
+def question_blocks(doc, passage):
+    """Split the question area into questions by column, keeping each one's
+    lines and its rectangle on the page."""
+    by_page = {}
+    for l in passage["questions_area"]:
+        by_page.setdefault(l.page, []).append(l)
+    blocks = []
+    for pno, lines in by_page.items():
+        for col in (0, 1):
+            col_lines = [l for l in lines if (l.x0 < COLUMN_SPLIT) == (col == 0)]
+            starts = [l for l in col_lines if abs(l.x0 - QUESTION_NO_X[col]) < 3 and NUM_RE.match(l.text)]
+            for i, s in enumerate(starts):
+                end_y = starts[i + 1].y0 if i + 1 < len(starts) else 10_000
+                own = [l for l in col_lines if s.y0 <= l.y0 < end_y]
+                blocks.append({"no": int(NUM_RE.match(s.text).group(1)), "page": pno, "col": col, "lines": own})
+    blocks.sort(key=lambda b: b["no"])
+    return blocks
+
+
+def parse_question(block):
+    """Stem and choices from the lines, in reading order. Choices may sit in
+    two sub-columns ((1)(3) / (2)(4)) and wrap onto indented lines."""
+    stem, choices, anchors = [], {}, {}
+    for i, l in enumerate(sorted(block["lines"], key=lambda l: (round(l.y0), l.x0))):
+        t = l.text.strip()
+        if i == 0:
+            t = re.sub(r"^\d{1,2}\s+", "", t)   # the question number
+        m = CHOICE_RE.match(t)
+        if m:
+            k = int(m.group(1))
+            choices[k] = t[m.end():].strip()
+            anchors[k] = l.x0
+        elif choices:
+            # Continuation of the nearest choice to its left in this row band.
+            k = max((k for k in anchors if anchors[k] <= l.x0), key=lambda k: anchors[k], default=None)
+            if k is not None:
+                choices[k] = (choices[k] + " " + t).strip()
+        else:
+            stem.append(t)
+    return " ".join(stem).strip(), [choices.get(k, "") for k in (1, 2, 3, 4)]
+
+
+def crop_question(doc, block, out_path):
+    """Render the question's column band at CROP_DPI and trim to the ink."""
+    page = doc[block["page"]]
+    xs = [l.x0 for l in block["lines"]] + [l.x1 for l in block["lines"]]
+    ys = [l.y0 for l in block["lines"]] + [l.y1 for l in block["lines"]]
+    col_x0, col_x1 = (30, COLUMN_SPLIT) if block["col"] == 0 else (COLUMN_SPLIT, 590)
+    rect = fitz.Rect(max(col_x0, min(xs) - 4), min(ys) - 4, min(col_x1, max(xs) + 4), max(ys) + 4)
+    pix = page.get_pixmap(clip=rect, dpi=CROP_DPI, colorspace=fitz.csGRAY)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    ink = np.argwhere(img < 200)
+    pad = 12
+    if len(ink):
+        (y0, x0), (y1, x1) = ink.min(0), ink.max(0)
+        y0, x0 = max(0, y0 - pad), max(0, x0 - pad)
+        y1, x1 = min(img.shape[0], y1 + pad), min(img.shape[1], x1 + pad)
+        scale = 72 / CROP_DPI
+        rect = fitz.Rect(rect.x0 + x0 * scale, rect.y0 + y0 * scale, rect.x0 + x1 * scale, rect.y0 + y1 * scale)
+        pix = page.get_pixmap(clip=rect, dpi=CROP_DPI)
+    pix.save(out_path)
+    return [round(v, 1) for v in rect], pix.width, pix.height
+
+
+LINE_REF_PATTERNS = [
+    (re.compile(r"\blines?\s+(\d+)\s+(?:through|to|-|–)\s+(\d+)", re.I), "range"),
+    (re.compile(r"\blines?\s+(\d+)\s+and\s+(\d+)", re.I), "pair"),
+    (re.compile(r"\blines?\s+(\d+)\b", re.I), "single"),
+]
+
+
+def line_refs(stem, stimulus):
+    """Passage lines cited by the STEM only. Choices of 'which lines best
+    support' items cite lines too, and highlighting those would hand the
+    student the answer."""
+    refs, taken = [], []
+    for pat, kind in LINE_REF_PATTERNS:
+        for m in pat.finditer(stem):
+            if any(a <= m.start() < b for a, b in taken):
+                continue
+            taken.append((m.start(), m.end()))
+            a = int(m.group(1))
+            if kind == "range":
+                refs.append({"start": a, "end": int(m.group(2)), "source": m.group(0)})
+            elif kind == "pair":
+                # "lines 33 and 35" cites two lines, not the span between them.
+                b = int(m.group(2))
+                refs += [{"start": a, "end": a, "source": m.group(0)}, {"start": b, "end": b, "source": m.group(0)}]
+            else:
+                refs.append({"start": a, "end": a, "source": m.group(0)})
+    m = re.search(r"\bthe (" + "|".join(ORDINALS) + r") (stanza|paragraph)\b", stem, re.I)
+    if m:
+        unit_no = ORDINALS.index(m.group(1).lower()) + 1
+        span = unit_span(stimulus, m.group(2).lower(), unit_no)
+        if span:
+            refs.append({"start": span[0], "end": span[1], "source": m.group(0)})
+    return refs
+
+
+def unit_span(stimulus, unit, k):
+    """First and last line of the k-th stanza (gap-separated) or paragraph
+    (indent-started) of a passage."""
+    starts = [ln["n"] for ln in stimulus["lines"]
+              if ln["n"] == 1 or (unit == "stanza" and ln["gap_before"]) or (unit == "paragraph" and ln["indent"])]
+    if k > len(starts):
+        return None
+    end = starts[k] - 1 if k < len(starts) else stimulus["line_count"]
+    return starts[k - 1], end
+
+
+# ---------------------------------------------------------------- key, standards
+
+def read_key(xlsx_path):
+    """{question number: answer} from the scoring-key workbook (column C is
+    the question number, D the key), read without openpyxl."""
+    z = zipfile.ZipFile(xlsx_path)
+    ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    shared = []
+    if "xl/sharedStrings.xml" in z.namelist():
+        for si in ElementTree.fromstring(z.read("xl/sharedStrings.xml")).findall("m:si", ns):
+            shared.append("".join(t.text or "" for t in si.iter(f"{{{ns['m']}}}t")))
+    sheet = ElementTree.fromstring(z.read("xl/worksheets/sheet1.xml"))
+    rows = []
+    for row in sheet.iter(f"{{{ns['m']}}}row"):
+        vals = {}
+        for c in row.findall("m:c", ns):
+            v = c.find("m:v", ns)
+            if v is None:
+                continue
+            val = shared[int(v.text)] if c.get("t") == "s" else v.text
+            vals[re.sub(r"\d", "", c.get("r"))] = val.strip()
+        rows.append(vals)
+    key = {}
+    for r in rows:
+        q, k, kind = r.get("C", ""), r.get("D", ""), r.get("E", "")
+        if q.replace(".0", "").isdigit() and kind == "MC":
+            key[int(float(q))] = k.replace(".0", "")
+    return key
+
+
+def normalise_standard(raw):
+    """'R.4(11-12)' -> 'R.4'; the grade band is the same for every item."""
+    return re.sub(r"\s*\(.*$", "", raw or "").strip()
+
+
+# ---------------------------------------------------------------- gates
+
+def gate(stimuli, questions, mismatches, key):
+    errors, warnings = list(mismatches), []
+    nos = [q["no"] for q in questions]
+    if nos != list(range(1, 25)):
+        errors.append(f"expected questions 1-24, got {nos}")
+    for s in stimuli:
+        if s["printed_numbers"] != list(range(5, s["line_count"] + 1, 5))[:len(s["printed_numbers"])]:
+            errors.append(f"passage {s['label']}: printed numbers {s['printed_numbers']} aren't every 5th line")
+        if s["line_count"] - (s["printed_numbers"][-1] if s["printed_numbers"] else 0) >= 5:
+            errors.append(f"passage {s['label']}: {s['line_count']} lines but last printed number is {s['printed_numbers'][-1:]}")
+        markers = sorted({n["n"] for ln in s["lines"] for n in ln["notes"]} | {n["n"] for n in s["title_notes"]})
+        glosses = sorted(f["n"] for f in s["footnotes"])
+        if markers != glosses:
+            errors.append(f"passage {s['label']}: footnote markers {markers} != glosses {glosses}")
+        if not s["attribution"]:
+            errors.append(f"passage {s['label']}: no attribution")
+        for ln in s["lines"]:
+            if "$" in ln["text"] or "||" in ln["text"]:
+                errors.append(f"passage {s['label']} line {ln['n']}: contains '$' or '||'")
+    for q in questions:
+        if not all(q["choices"]):
+            errors.append(f"Q{q['no']}: missing choice text {q['choices']}")
+        if str(q["key"]) not in ("1", "2", "3", "4"):
+            errors.append(f"Q{q['no']}: key {q['key']!r}")
+        stim = next(s for s in stimuli if s["label"] == q["passage"])
+        for r in q["line_refs"]:
+            if not (1 <= r["start"] <= r["end"] <= stim["line_count"]):
+                errors.append(f"Q{q['no']}: cites lines {r['start']}-{r['end']} outside passage {q['passage']} (1-{stim['line_count']})")
+        for t in [q["stem"]] + q["choices"]:
+            if "$" in t or "||" in t:
+                errors.append(f"Q{q['no']}: contains '$' or '||'")
+        if not q["standard"]:
+            warnings.append(f"Q{q['no']}: no standard in maps.json")
+        if re.search(r"\b(photograph|image|graphic|illustration|picture)\b", q["stem"], re.I):
+            warnings.append(f"Q{q['no']}: stem refers to an image; hold the set unless the figure ships")
+    if len(key) != 24:
+        errors.append(f"scoring key has {len(key)} MC answers")
+    return errors, warnings
+
+
+# ---------------------------------------------------------------- review page
+
+def spans_with_italic(text, italic):
+    """[(start, end, is_italic)] covering the whole text."""
+    out, last = [], 0
+    for a, b in sorted(italic):
+        if a > last:
+            out.append((last, a, False))
+        out.append((a, b, True))
+        last = b
+    if last < len(text):
+        out.append((last, len(text), False))
+    return out
+
+
+def review_html(meta, stimuli, questions, page_pngs, errors, warnings):
+    e = html.escape
+    out = [f"""<!doctype html><meta charset="utf-8"><title>ELA review: {e(meta['month'])} {meta['year']}</title>
+<style>
+body {{ font: 15px -apple-system, system-ui, sans-serif; margin: 24px; background: #EEF0F2; color: #121317; }}
+section {{ background: #fff; border-radius: 12px; padding: 20px; margin: 0 0 20px; }}
+.pair {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; }}
+.pages img {{ width: 100%; border: 1px solid #ccc; margin-bottom: 8px; }}
+/* One printed line per row, never wrapped, so rows match the page image
+   one to one; a long line scrolls sideways instead. */
+.text {{ overflow-x: auto; }}
+.ln {{ display: grid; grid-template-columns: 3em max-content; font-family: Georgia, serif;
+       font-size: 13px; line-height: 1.6; white-space: pre; }}
+.ln span:first-child {{ color: #5E5E63; text-align: right; padding-right: .8em; }}
+.ln.gap {{ margin-top: 1em; }} .ln.indent span:last-child {{ padding-left: 1.5em; }}
+.ln.cited span:first-child {{ color: #121317; font-weight: 600; }}
+sup {{ color: #0066CC; }} .q img {{ max-width: 100%; border: 1px solid #ddd; }}
+.q {{ border-top: 1px solid #ddd; padding: 14px 0; }} .meta {{ color: #5E5E63; font-size: 13px; }}
+.err {{ color: #C8281E; }} .warn {{ color: #8a5a00; }}
+</style>
+<h1>{e(meta['month'])} {meta['year']} ELA Part 1: extraction review</h1>
+<p>Check each passage against its page images line by line (text, line numbers, italics, footnotes,
+breaks), then each question crop against its parsed stem, key and cited lines.</p>"""]
+    out.append("<section><h2>Gates</h2>" + ("".join(f"<p class=err>{e(x)}</p>" for x in errors) or "<p>All hard gates pass.</p>")
+               + "".join(f"<p class=warn>{e(x)}</p>" for x in warnings) + "</section>")
+    for s in stimuli:
+        cited = {n for q in questions if q["passage"] == s["label"] for r in q["line_refs"] for n in range(r["start"], r["end"] + 1)}
+        rows = []
+        for ln in s["lines"]:
+            text = ln["text"]
+            pieces, last = [], 0
+            marks = sorted([(a, b, "i") for a, b in ln["italic"]] + [(n["at"], n["at"], n["n"]) for n in ln["notes"]])
+            for a, b, kind in marks:
+                pieces.append(e(text[last:a]))
+                if kind == "i":
+                    pieces.append(f"<i>{e(text[a:b])}</i>")
+                    last = b
+                else:
+                    pieces.append(f"<sup>{kind}</sup>")
+                    last = a
+            pieces.append(e(text[last:]))
+            cls = " ".join(c for c, on in (("gap", ln["gap_before"]), ("indent", ln["indent"]), ("cited", ln["n"] in cited)) if on)
+            num = ln["n"] if ln["n"] % 5 == 0 or ln["n"] in cited else ""
+            rows.append(f"<div class='ln {cls}'><span>{num}</span><span>{''.join(pieces)}</span></div>")
+        notes = "".join(f"<p class=meta><sup>{f['n']}</sup> {e(f['term'])}: {e(f['gloss'])}</p>" for f in s["footnotes"])
+        attr = "<br>".join(
+            "".join(f"<i>{e(a['text'][x:y])}</i>" if k else e(a['text'][x:y])
+                    for x, y, k in spans_with_italic(a["text"], a["italic"]))
+            for a in s["attribution"])
+        imgs = "".join(f"<img src='{e(page_pngs[p])}' alt='page {p + 1}'>" for p in s["pages"])
+        out.append(f"""<section><h2>Passage {e(s['label'])} ({e(s['kind'])}): {e(s['title'])}</h2>
+<p class=meta>{s['line_count']} lines; printed numbers {s['printed_numbers']}; pages {[p + 1 for p in s['pages']]}</p>
+<div class=pair><div class=text>{''.join(rows)}<p style="text-align:right">{attr}</p>{notes}</div><div class=pages>{imgs}</div></div></section>""")
+    out.append("<section><h2>Questions</h2>")
+    for q in questions:
+        refs = ", ".join(f"{r['start']}-{r['end']} ({e(r['source'])})" for r in q["line_refs"]) or "none"
+        choices = "".join(f"<li>{e(c)}</li>" for c in q["choices"])
+        out.append(f"""<div class=q><p class=meta>Q{q['no']} &middot; passage {q['passage']} &middot; key ({q['key']}) &middot;
+{e(q['standard'] or '?')} &middot; cited lines: {refs}</p><div class=pair><img src='{e(q['crop'])}' alt=''>
+<div><p>{e(q['stem'])}</p><ol>{choices}</ol></div></div></div>""")
+    out.append("</section>")
+    return "\n".join(out)
+
+
+# ---------------------------------------------------------------- main
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("code", help="administration code, e.g. 626 for June 2026")
+    args = parser.parse_args()
+    meta = EXAMS[args.code]
+    src = os.path.join(PDF_DIR, args.code)
+    out = os.path.join(OUT_DIR, args.code)
+    os.makedirs(os.path.join(out, "crops"), exist_ok=True)
+    os.makedirs(os.path.join(out, "pages"), exist_ok=True)
+
+    doc = fitz.open(os.path.join(src, f"{meta['stem']}-exam.pdf"))
+    part1_pages, started = [], False
+    for pno, page in enumerate(doc):
+        text = page.get_text()
+        if re.search(r"^Part 1\s*$", text, re.M):
+            started = True
+        if started and re.search(r"^Part 2\s*$", text, re.M):
+            break
+        if started:
+            part1_pages.append(pno)
+
+    raw = extract_passages(doc, part1_pages)
+    stimuli, mismatches = [], []
+    for p in raw:
+        s, mm = build_stimulus(p)
+        stimuli.append(s)
+        mismatches += [f"passage {p['label']}: {m}" for m in mm]
+
+    key = read_key(os.path.join(src, f"{meta['stem']}-sk.xlsx"))
+    standards = json.load(open(MAPS_PATH)).get(args.code, {}).get("qs", {})
+
+    questions = []
+    for p, s in zip(raw, stimuli):
+        for b in question_blocks(doc, p):
+            stem, choices = parse_question(b)
+            crop_name = f"crops/q{b['no']:02d}.png"
+            rect, w, h = crop_question(doc, b, os.path.join(out, crop_name))
+            questions.append({
+                "no": b["no"],
+                "passage": s["label"],
+                "stem": stem,
+                "choices": choices,
+                "key": key.get(b["no"]),
+                "standard_raw": standards.get(str(b["no"])),
+                "standard": normalise_standard(standards.get(str(b["no"]))),
+                "line_refs": line_refs(stem, s),
+                "crop": crop_name,
+                "crop_px": [w, h],
+                "crop_rect": {"page": b["page"], "rect": rect},
+            })
+    questions.sort(key=lambda q: q["no"])
+
+    figures = []
+    for pno in part1_pages:
+        for info in doc[pno].get_image_info():
+            owner = next((s["label"] for s in stimuli if pno in s["pages"]), None)
+            figures.append({"page": pno, "bbox": [round(v) for v in info["bbox"]], "passage": owner})
+
+    errors, warnings = gate(stimuli, questions, mismatches, key)
+    for f in figures:
+        warnings.append(f"passage {f['passage']}: image on page {f['page'] + 1} at {f['bbox']}; decide whether it is decorative")
+
+    page_pngs = {}
+    for pno in part1_pages:
+        name = f"pages/p{pno + 1:02d}.png"
+        doc[pno].get_pixmap(dpi=110).save(os.path.join(out, name))
+        page_pngs[pno] = name
+
+    bundle = {"exam": {"subject": "ELA", **{k: meta[k] for k in ("month", "year")}, "code": args.code,
+                       "source": f"https://www.nysedregents.org/hsela/{args.code}/{meta['stem']}-exam.pdf"},
+              "stimuli": stimuli, "questions": questions, "figures": figures,
+              "gates": {"errors": errors, "warnings": warnings}}
+    with open(os.path.join(out, "bundle.json"), "w") as f:
+        json.dump(bundle, f, indent=1, ensure_ascii=False)
+    with open(os.path.join(out, "review.html"), "w") as f:
+        f.write(review_html(meta, stimuli, questions, page_pngs, errors, warnings))
+
+    for s in stimuli:
+        print(f"[ela] passage {s['label']} ({s['kind']}): {s['title']!r}, {s['line_count']} lines, "
+              f"{len(s['footnotes'])} footnotes, pages {[p + 1 for p in s['pages']]}")
+    print(f"[ela] {len(questions)} questions, {sum(bool(q['line_refs']) for q in questions)} cite lines")
+    for w in warnings:
+        print(f"[warn] {w}")
+    for e in errors:
+        print(f"[error] {e}")
+    print(f"[ela] review: {os.path.join(out, 'review.html')}")
+    sys.exit(1 if errors else 0)
+
+
+if __name__ == "__main__":
+    main()

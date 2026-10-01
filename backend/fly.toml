@@ -9,6 +9,10 @@ primary_region = "ewr"
   internal_port = 8080
   force_https = true
   auto_start_machines = true
+  # One always-on machine, no scale to zero: no cold starts, and the in-memory
+  # rate limits and LLM cap stay exact. No separate staging app; new features
+  # ship dark behind flags (ELA_ENABLED) instead.
+  auto_stop_machines = "off"
   min_machines_running = 1
   processes = ["app"]
 

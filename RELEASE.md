@@ -29,9 +29,13 @@ A frontend change that needs a new API field must wait for step 1.
 | `fly deploy` | |
 | `scripts/smoke.sh` | a deploy that boots but doesn't work: it runs a real query, check, image and PDF |
 
-Set `REGENTS_BACKUP_MIRROR` to a folder that is synced off this laptop (for
-example a cloud-drive folder). Without it the backup script warns that the
-copy shares a disk with the original.
+Off-laptop backups are paused for now (owner decision, 2026-10-01): the
+script keeps a local copy and warns that it isn't mirrored. To mirror later,
+set `REGENTS_BACKUP_MIRROR` to a folder synced off this laptop. To skip the
+local copy too, run with `REGENTS_SKIP_BACKUP=1`.
+
+`scripts/check_no_passages.sh` fails the release if any ELA passage line from
+the database is in a file tracked by git (the repo is public).
 
 ## Rolling back
 
@@ -51,6 +55,8 @@ For the frontend, use "Publish deploy" on the previous build in Netlify.
 | Name | Where | Default | Purpose |
 |---|---|---|---|
 | `FIREWORKS_API_KEY` | `fly secrets set` | none | query parsing |
+| `ELA_ENABLED` | `fly secrets set` | off | serve ELA passage sets and show ELA on the welcome screen |
+| `WITHDRAWN_STIMULI` | `fly secrets set` | none | comma-separated stimulus ids to stop serving at once (query, history and check) |
 | `LLM_DAILY_CAP` | `fly secrets set` or `[env]` in fly.toml | 2000 | Fireworks calls per day across all visitors; past it, students see "Practice sets are paused for today because of heavy use. Try again tomorrow." |
 
 Rate limits and the daily cap are counted in memory, which is exact for the
@@ -64,3 +70,51 @@ machines or workers without moving them to shared storage.
   `https://backend-winter-smoke-307.fly.dev/readyz`.
 - `fly logs | grep llm_call` shows every Fireworks call with its latency and
   token counts.
+
+## ELA
+
+ELA ships dark: the code, the passages and the frontend can all be live with
+`ELA_ENABLED` off, and nothing ELA is served or shown.
+
+### Adding an exam
+
+All on the laptop, no code changes:
+
+1. `python scripts/ela_extract.py <code>` writes `scripts/ela_out/<code>/`
+   (git-ignored): `bundle.json`, the crops and `review.html`.
+2. Read each passage in `review.html` beside the exam PDF, line by line.
+3. `python scripts/ela_import.py <code>` re-runs the hard gates and loads the
+   exam. Re-importing keeps ids; a passage whose text changed loses its
+   verification.
+4. `python scripts/ela_stimuli.py verify <code> --by "<name>"` once the text
+   is checked. Unverified passages are never served.
+5. `python scripts/ela_explanations.py --exam <code> --dry-run`, read the
+   report (every theme and "best supports" item by hand), then run it
+   without `--dry-run`. A question that fails a validator ships without an
+   explanation.
+6. `scripts/release.sh`.
+
+### Kill switches
+
+| To | Do | Takes effect |
+|---|---|---|
+| Take down one passage now | `fly secrets set WITHDRAWN_STIMULI=12,13` | on the restart the secret triggers, within about 2 minutes |
+| Keep it down in later releases | `python scripts/ela_stimuli.py withdraw 12 13`, then release | next release |
+| Turn ELA off entirely | `fly secrets set ELA_ENABLED=false` | on restart |
+
+A withdrawn passage disappears from new sets, from chat history and from
+answer checks. `/readyz` shows `ela_enabled` and `withdrawn_stimuli`.
+
+### Launch checklist
+
+- [ ] The 6 most recent administrations imported, every passage verified
+- [ ] Both kill switches tried once (on a deploy with ELA on, before telling anyone)
+- [ ] noindex on the API (`X-Robots-Tag`, smoke test checks it)
+- [ ] Download rejects ELA ids (smoke test checks it once ELA is on)
+- [ ] `LLM_DAILY_CAP` set
+- [ ] `fly secrets set ELA_ENABLED=true`, then `scripts/smoke.sh`, then watch
+      `fly logs` for 72 hours
+
+Deferred by the owner (2026-10-01): legal consult, a published rights contact
+and takedown target (to be confirmed with NYSED later), off-laptop backups,
+and a monthly Fireworks spending cap.

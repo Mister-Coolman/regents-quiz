@@ -44,4 +44,24 @@ code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/static/$IMG")
 code=$(curl -s -o "$TMP/p.pdf" -w "%{http_code}" "$BASE/api/download?ids=$QID")
 [[ "$code" == 200 ]] && head -c 4 "$TMP/p.pdf" | grep -q "%PDF" || fail "download returned $code"
 echo "[smoke] image and PDF ok"
+
+# ELA, only once it is switched on (one more LLM call).
+curl -s -o "$TMP/f.json" "$BASE/api/features"
+if [[ "$(json "$TMP/f.json" 'd.get("ela")')" == "True" ]]; then
+  curl -s -o "$TMP/e.json" -X POST "$BASE/api/query" -H "Content-Type: application/json" \
+    -d "{\"session_id\":\"$SID\",\"query\":\"Give me an ELA passage\"}"
+  ns=$(json "$TMP/e.json" 'len(d.get("stimuli", []))')
+  [[ "$ns" -ge 1 ]] || fail "ELA query returned no passage: $(head -c 300 "$TMP/e.json")"
+  leaked=$(json "$TMP/e.json" '[k for q in d["questions"] for k in ("correct_answer","explanation","question_text","choices") if k in q]')
+  [[ "$leaked" == "[]" ]] || fail "ELA query leaked $leaked"
+  EID=$(json "$TMP/e.json" 'd["questions"][0]["id"]')
+  curl -s -o "$TMP/ec.json" -X POST "$BASE/api/check" -H "Content-Type: application/json" \
+    -d "{\"session_id\":\"$SID\",\"question_id\":$EID,\"answer\":\"1\"}"
+  json "$TMP/ec.json" 'd.get("correct") in (True, False)' | grep -q True || fail "ELA check: $(head -c 300 "$TMP/ec.json")"
+  code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/download?ids=$EID")
+  [[ "$code" == 400 ]] || fail "download of ELA id returned $code, expected 400"
+  echo "[smoke] ELA: passage set served, graded, no PDF"
+else
+  echo "[smoke] ELA is off; skipped"
+fi
 echo "[smoke] passed"

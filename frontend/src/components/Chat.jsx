@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import QuizPlayer                       from './QuizPlayer';
 import MessageBubble                    from './MessageBubble';
 import TypingIndicator                  from './TypingIndicator';
-import SubjectMark, { SUBJECTS }        from './SubjectMark';
+import SubjectMark, { ELA, MATH_SUBJECTS } from './SubjectMark';
 import styles                           from '../styles/Chat.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
@@ -32,6 +32,18 @@ export default function Chat() {
   ]);
 
   const [messages, setMessages] = useState(greeting);
+  // What the API offers. ELA appears only once the backend switches it on,
+  // so the frontend can ship before ELA launches.
+  const [features, setFeatures] = useState({ ela: false });
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`${apiBase}/api/features`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => { if (!cancelled && data) setFeatures(data); })
+      .catch(() => { /* older backend or offline: math only */ });
+    return () => { cancelled = true; };
+  }, []);
+  const subjects = features.ela ? [...MATH_SUBJECTS, ELA] : MATH_SUBJECTS;
   const [input, setInput]                 = useState('');
   const [loading, setLoading]             = useState(false);
   // Tracked by message key, not array index: the index would silently point at
@@ -109,7 +121,9 @@ export default function Chat() {
         return;
       }
 
-      replaceTyping({ sender: 'bot', text: data.response, questions: data.questions || [] });
+      replaceTyping({
+        sender: 'bot', text: data.response, questions: data.questions || [], stimuli: data.stimuli || [],
+      });
     } catch (err) {
       console.error('Query failed:', err);
       replaceTyping({
@@ -172,7 +186,7 @@ export default function Chat() {
         <div className={styles.navInner}>
           <span className={styles.wordmark}>
             <span className={styles.marks} aria-hidden="true">
-              {SUBJECTS.map(s => <SubjectMark key={s.name} subject={s} size={11} />)}
+              {subjects.map(s => <SubjectMark key={s.key} subject={s} size={11} />)}
             </span>
             Regents Prep
           </span>
@@ -185,9 +199,10 @@ export default function Chat() {
       </header>
 
       {activeQuiz ? (
-        <main className={styles.main}>
+        <main className={activeQuiz.stimuli?.length ? `${styles.main} ${styles.mainWide}` : styles.main}>
           <QuizPlayer
             questions={activeQuiz.questions}
+            stimuli={activeQuiz.stimuli || []}
             sessionId={sessionId}
             onFinish={() => setActiveQuizKey(null)}
           />
@@ -204,16 +219,20 @@ export default function Chat() {
                   explanations and hints are written by AI and can contain mistakes.
                 </p>
                 <ul className={styles.subjectList}>
-                  {SUBJECTS.map(s => (
-                    <li key={s.name}>
+                  {subjects.map(s => (
+                    <li key={s.key}>
                       <button
                         className={styles.subjectRow}
-                        onClick={() => sendMessage(`List ${s.name} topics`)}
+                        onClick={() => sendMessage(s === ELA
+                          ? 'What English Language Arts practice do you have?'
+                          : `List ${s.name} topics`)}
                         disabled={loading}
                       >
                         <SubjectMark subject={s} size={18} />
                         <span className={styles.subjectName}>{s.name}</span>
-                        <span className={styles.subjectAction}>See topics</span>
+                        <span className={styles.subjectAction}>
+                          {s === ELA ? 'See practice options' : 'See topics'}
+                        </span>
                         <span className={styles.chevron} aria-hidden="true">›</span>
                       </button>
                     </li>
@@ -241,7 +260,7 @@ export default function Chat() {
                           className={styles.primaryBtn}
                           onClick={() => setActiveQuizKey(msg.key)}
                         >
-                          Start quiz
+                          {msg.stimuli?.length ? 'Start reading' : 'Start quiz'}
                         </button>
                       )}
 

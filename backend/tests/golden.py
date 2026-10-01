@@ -20,6 +20,8 @@ sys.path.insert(0, BACKEND)
 
 from answers import check_answer, public_question  # noqa: E402
 
+MATH_SUBJECTS = ("Algebra I", "Geometry", "Algebra II")
+
 GOLDEN_PATH = os.path.join(BACKEND, "tests", "golden_math.json")
 ANSWERS = ("1", "2", "3", "4", "an unmatched answer")
 
@@ -36,7 +38,8 @@ def fingerprint(q):
 def compute(db_path):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    rows = conn.execute("SELECT * FROM questions ORDER BY id").fetchall()
+    # Math only: ELA rows are new and have their own tests (tests/test_ela.py).
+    rows = conn.execute("SELECT * FROM questions WHERE subject IN (?, ?, ?) ORDER BY id", MATH_SUBJECTS).fetchall()
     conn.close()
     return {str(r["id"]): fingerprint(dict(r)) for r in rows}
 

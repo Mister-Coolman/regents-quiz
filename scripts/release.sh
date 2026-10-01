@@ -27,13 +27,20 @@ assert v == migrate.latest_version() == db.SCHEMA_VERSION, 'run python migrate.p
 ")
 
 step "3. Back up the database (before anything changes it)"
-"$ROOT/scripts/backup_db.sh"
+# Off-laptop backups are paused for now (owner decision, 2026-10-01); this
+# still keeps a local copy. REGENTS_SKIP_BACKUP=1 skips even that.
+if [[ "${REGENTS_SKIP_BACKUP:-}" == "1" ]]; then
+  echo "skipped (REGENTS_SKIP_BACKUP=1)"
+else
+  "$ROOT/scripts/backup_db.sh"
+fi
 
 step "4. Empty the session tables, so local chats don't ship in the image"
 sqlite3 "$DB" "DELETE FROM session_questions; DELETE FROM session_messages; DELETE FROM sessions; VACUUM;"
 
 step "5. Data checks"
 "$PY" "$ROOT/scripts/check_data.py" --ship
+PYTHON="$PY" "$ROOT/scripts/check_no_passages.sh" "$DB"
 
 step "6. Tests (including the golden math payloads)"
 (cd "$ROOT/backend" && "$PY" -m pytest -q)

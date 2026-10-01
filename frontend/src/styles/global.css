@@ -21,6 +21,11 @@
   --algebra1: #D8402B;
   --geometry: #F2B31B;
   --algebra2: #1F5FBF;
+  --ela: #121317;
+
+  /* Lines a question cites in a passage. Always paired with a bracket and a
+     text label, so colour is never the only signal. */
+  --cite: #E4E7EB;
 
   /* Feedback */
   --correct: #1E7B34;

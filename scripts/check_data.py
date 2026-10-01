@@ -7,6 +7,7 @@ Exits non-zero if anything that would break the live app is wrong. Warnings
   python scripts/check_data.py --ship     # also require empty session tables
 """
 import argparse
+import json
 import os
 import sqlite3
 import sys
@@ -20,8 +21,61 @@ import db  # noqa: E402
 from topics import SUBJECT_TOPICS  # noqa: E402
 
 STATIC = os.path.join(BACKEND, "static")
-MCQ_MAX_NO = 24          # every math Regents: Part I is questions 1-24
+MCQ_MAX_NO = 24          # every math Regents, and ELA: Part 1 is questions 1-24
+ELA_SUBJECT = "ELA"
 EXPLANATION_HEADINGS = ("What's being asked", "Approach", "Work", "Answer")
+
+
+def check_ela(conn, rows, errors, warnings):
+    """Passages and the ELA questions that point at them. The same hard gates
+    as scripts/ela_import.py, run on what will actually ship."""
+    stimuli = {}
+    for r in conn.execute("SELECT * FROM stimuli"):
+        s = dict(r)
+        tag = f"stimulus {s['id']} ({s['label']})"
+        try:
+            lines = json.loads(s["lines"])
+            footnotes = json.loads(s["footnotes"] or "[]")
+        except ValueError:
+            errors.append(f"{tag}: lines or footnotes aren't valid JSON")
+            continue
+        ns = [line.get("n") for line in lines if line.get("n") is not None]
+        if ns != sorted(set(ns)):
+            errors.append(f"{tag}: line numbers aren't increasing")
+        texts = [line.get("text", "") for line in lines] + footnotes + [s[k] or "" for k in ("title", "author", "intro", "credit")]
+        if any("$" in t or "||" in t for t in texts):
+            errors.append(f"{tag}: text contains '$' or '||'")
+        if s["verified_at"] is None and s["rights_status"] != "withdrawn":
+            warnings.append(f"{tag}: not verified, so not served")
+        stimuli[s["id"]] = set(ns)
+
+    links = {}
+    for qid, sid in conn.execute("SELECT question_id, stimulus_id FROM question_stimuli"):
+        links.setdefault(qid, []).append(sid)
+        if sid not in stimuli:
+            errors.append(f"id {qid}: linked to missing stimulus {sid}")
+    for qid, sid, start, end in conn.execute("SELECT * FROM question_line_refs"):
+        missing = [n for n in range(start, end + 1) if n not in stimuli.get(sid, set())]
+        if missing:
+            errors.append(f"id {qid}: cites line(s) {missing} that stimulus {sid} doesn't have")
+
+    for q in rows:
+        if q["subject"] != ELA_SUBJECT:
+            if q["id"] in links:
+                errors.append(f"id {q['id']}: a {q['subject']} question is linked to a passage")
+            continue
+        tag = f"id {q['id']} (ELA {q['month']} {q['year']} q{q['question_no']})"
+        if q["id"] not in links:
+            errors.append(f"{tag}: belongs to no passage")
+        if not q.get("question_text") or not q.get("alt_text"):
+            errors.append(f"{tag}: missing question_text or alt_text")
+        try:
+            if len(json.loads(q.get("choices") or "")) != 4:
+                errors.append(f"{tag}: needs 4 choices")
+        except ValueError:
+            errors.append(f"{tag}: choices aren't valid JSON")
+        if any("$" in (q.get(k) or "") or "||" in (q.get(k) or "") for k in ("question_text", "choices", "explanation")):
+            errors.append(f"{tag}: text contains '$' or '||'")
 
 
 def main():
@@ -46,6 +100,8 @@ def main():
 
     for q in rows:
         tag = f"id {q['id']} ({q['subject']} {q['month']} {q['year']})"
+        if q.get("exam_id") is None:
+            errors.append(f"{tag}: no exam_id")
         path = os.path.join(STATIC, q["question_image_path"] or "")
         if not q["question_image_path"] or not os.path.isfile(path):
             errors.append(f"{tag}: image missing: {q['question_image_path']}")
@@ -66,6 +122,8 @@ def main():
             warnings.append(f"{tag}: no explanation")
         elif not all(f"**{h}**" in expl for h in EXPLANATION_HEADINGS):
             warnings.append(f"{tag}: explanation is missing a section, so hints are partial")
+
+    check_ela(conn, rows, errors, warnings)
 
     used = {q["question_image_path"] for q in rows}
     on_disk = set()

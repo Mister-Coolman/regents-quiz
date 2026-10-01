@@ -533,3 +533,23 @@
     opacity: 1;
   }
 }
+
+/* ---- Passage sets ---- */
+/* ELA crops are the printed stem and choices: never shrink them to fit. */
+.questionCrop {
+  max-height: none;
+}
+
+.rereadRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 20px;
+  margin: -12px 0 16px;
+}
+
+.card:focus {
+  outline: none;
+}
+.card:focus-visible {
+  box-shadow: 0 0 0 3px var(--ground), 0 0 0 5px var(--link);
+}

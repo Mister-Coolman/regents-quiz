@@ -1,8 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import MathText from './MathText';
-import SubjectMark from './SubjectMark';
+import SubjectMark, { subjectLabel } from './SubjectMark';
 import ScoreDial from './ScoreDial';
+import PassageReader from './PassageReader';
+import LineExcerpt from './LineExcerpt';
+import { rangeLabel } from './lines';
 import styles from '../styles/QuizPlayer.module.css';
+import passageStyles from '../styles/Passage.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
 const OPTIONS = [1, 2, 3, 4];
@@ -32,6 +36,14 @@ function clearProgress(key) {
   } catch {
     /* nothing to do */
   }
+}
+
+/** "7 min 12 s", or "45 s" under a minute. */
+function formatDuration(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return m > 0 ? `${m} min ${sec} s` : `${sec} s`;
 }
 
 /** Full explanation behind a disclosure, so the answer isn't dumped on sight. */
@@ -65,7 +77,7 @@ function ExplanationPanel({ text, defaultOpen = false }) {
   );
 }
 
-export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
+export default function QuizPlayer({ questions = [], stimuli = [], sessionId, onFinish }) {
   // 1) Guard against empty questions
   if (!Array.isArray(questions) || questions.length === 0) {
     return (
@@ -104,12 +116,30 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
   // rather than simply having advanced past the first question.
   const [wasResumed, setWasResumed] = useState(() => Object.keys(saved?.results ?? {}).length > 0);
 
+  // A passage set: the reader sits beside (or above) the questions.
+  const isSet = Array.isArray(stimuli) && stimuli.length > 0;
+  const readerRef = useRef(null);
+  const questionRef = useRef(null);
+  // What a screen reader hears when the question changes.
+  const [announcement, setAnnouncement] = useState('');
+
+  // Time spent with the quiz open, counted up and shown only on the results
+  // screen of a passage set. Time with the quiz closed doesn't count.
+  const elapsedBase = useRef(saved?.elapsedMs ?? 0);
+  const openedAt = useRef(Date.now());
+  const elapsedNow = () => elapsedBase.current + (Date.now() - openedAt.current);
+  const [finishedMs, setFinishedMs] = useState(saved?.finishedMs ?? null);
+
   useEffect(() => {
-    saveProgress(storageKey, { idx, results, revealed, hintsUsed, finished });
-  }, [storageKey, idx, results, revealed, hintsUsed, finished]);
+    saveProgress(storageKey, {
+      idx, results, revealed, hintsUsed, finished,
+      elapsedMs: finished ? finishedMs : elapsedNow(), finishedMs,
+    });
+  }, [storageKey, idx, results, revealed, hintsUsed, finished, finishedMs]);
 
   const current = questions[idx];
   const { subject = '', month = '', year = '', question_no: questionNo } = current;
+  const stimulusById = Object.fromEntries((stimuli || []).map(st => [st.id, st]));
   // Constructed-response questions come back ungraded (correct: null) -- they
   // are marked with a rubric -- so they count toward neither score nor misses.
   const graded = questions.filter(q => typeof results[q.id] === 'boolean');
@@ -163,6 +193,14 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
     setHintLevel(0);
     setHintsUsed(0);
     setWasResumed(false);
+    elapsedBase.current = 0;
+    openedAt.current = Date.now();
+    setFinishedMs(null);
+  };
+
+  const focusQuestion = () => {
+    questionRef.current?.focus({ preventScroll: true });
+    questionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   };
 
   // Next question or finish
@@ -173,7 +211,16 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
     setHintLevel(0);
     if (idx + 1 < questions.length) {
       setIdx(i => i + 1);
+      if (isSet) {
+        setAnnouncement(`Question ${idx + 2} of ${questions.length}`);
+        // In one column the passage sits above the question: bring the next
+        // question up rather than leaving the student at the old feedback.
+        if (window.matchMedia?.('(max-width: 1023px)').matches) {
+          requestAnimationFrame(() => questionRef.current?.scrollIntoView({ block: 'start' }));
+        }
+      }
     } else {
+      setFinishedMs(elapsedNow());
       setFinished(true);
     }
   };
@@ -214,6 +261,7 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
             {hintsUsed === 0
               ? 'No hints used.'
               : `${hintsUsed} hint${hintsUsed === 1 ? '' : 's'} used.`}
+            {isSet && finishedMs != null && <> Time: {formatDuration(finishedMs)}.</>}
           </p>
           <div className={styles.resultsActions}>
             <button onClick={onFinish} className={styles.primaryBtn}>
@@ -232,15 +280,25 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
               <div key={`${q.id}-${i}`} className={styles.card}>
                 <div className={styles.reviewMeta}>
                   <SubjectMark subject={q.subject} size={12} />
-                  <span className={styles.reviewNumber}>Question {questions.indexOf(q) + 1}</span>
+                  <span className={styles.reviewNumber}>
+                    Question {isSet && q.question_no ? q.question_no : questions.indexOf(q) + 1}
+                  </span>
                   <span>{q.topic}</span>
                   <span className={styles.reviewAnswer}>Answer: {revealed[q.id]?.correct_answer}</span>
                 </div>
+                {(q.line_refs || []).map(r => stimulusById[r.stimulus_id] && (
+                  <LineExcerpt
+                    key={`${r.stimulus_id}-${r.start}`}
+                    stimulus={stimulusById[r.stimulus_id]}
+                    start={r.start}
+                    end={r.end}
+                  />
+                ))}
                 {q.question_image_path && (
                   <img
                     className={styles.reviewImage}
                     src={`${apiBase}/${q.question_image_path}`}
-                    alt={`Diagram for question ${questions.indexOf(q) + 1}`}
+                    alt={q.alt_text || `Diagram for question ${questions.indexOf(q) + 1}`}
                   />
                 )}
                 {q.question_text && <p className={styles.reviewQuestion}>{q.question_text}</p>}
@@ -270,12 +328,33 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
         <div className={styles.meta}>
           <SubjectMark subject={subject} size={12} />
           <span>
-            {[subject, [month, year].filter(Boolean).join(' '), questionNo && `question ${questionNo}`]
+            {[subjectLabel(subject), [month, year].filter(Boolean).join(' '), questionNo && `question ${questionNo}`]
               .filter(Boolean).join(', ')}
           </span>
         </div>
       </div>
 
+      {isSet && <p role="status" className="sr-only">{announcement}</p>}
+
+      {isSet ? (
+        <div className={passageStyles.layout}>
+          <PassageReader
+            ref={readerRef}
+            stimuli={stimuli}
+            question={current}
+            questionNumber={questionNo || idx + 1}
+            questionTargetId="question-card"
+            onBackToQuestion={focusQuestion}
+          />
+          <div>{questionBlock()}</div>
+        </div>
+      ) : questionBlock()}
+    </div>
+  );
+
+  function questionBlock() {
+    return (
+    <>
       <div className={styles.counter}>
         <h2 className="sr-only">Question {idx + 1} of {questions.length}</h2>
         <span className={styles.counterNum} aria-hidden="true">{idx + 1}</span>
@@ -283,13 +362,28 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
         {wasResumed && <span className={styles.resumed}>Picked up where you left off</span>}
       </div>
 
-      <div className={styles.card}>
+      <div className={styles.card} id="question-card" ref={questionRef} tabIndex={-1}>
         {current.question_image_path && (
           <img
-            className={styles.questionImage}
+            className={isSet ? `${styles.questionImage} ${styles.questionCrop}` : styles.questionImage}
             src={`${apiBase}/${current.question_image_path}`}
-            alt="Diagram for this question"
+            alt={current.alt_text || 'Diagram for this question'}
           />
+        )}
+
+        {isSet && (current.line_refs || []).length > 0 && (
+          <div className={styles.rereadRow}>
+            {current.line_refs.map(r => (
+              <button
+                key={`${r.stimulus_id}-${r.start}`}
+                type="button"
+                className={styles.textBtn}
+                onClick={() => readerRef.current?.focusRange(r)}
+              >
+                Reread {rangeLabel(r.start, r.end).toLowerCase()}
+              </button>
+            ))}
+          </div>
         )}
 
         <p className={styles.questionText}>{current.question_text}</p>
@@ -395,6 +489,7 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
           </div>
         )}
       </div>
-    </div>
-  );
+    </>
+    );
+  }
 }
