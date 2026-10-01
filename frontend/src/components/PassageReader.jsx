@@ -1,4 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useRef } from 'react';
+import ProseFlow from './ProseFlow';
 import { rangeKey, rangeLabel, refsFor, segment } from './lines';
 import styles from '../styles/Passage.module.css';
 
@@ -27,6 +28,16 @@ function Passage({ stimulus, refs, rangeRefs, questionNumber, onBackToQuestion }
       </header>
       {stimulus.intro && <p className={styles.intro}>{stimulus.intro}</p>}
 
+      {stimulus.kind !== 'poem' ? (
+        <ProseFlow
+          lines={stimulus.lines}
+          refs={refs}
+          stimulusId={stimulus.id}
+          questionNumber={questionNumber}
+          rangeRefs={rangeRefs}
+          onBackToQuestion={onBackToQuestion}
+        />
+      ) : (
       <div className={styles.lines}>
         {segment(stimulus.lines, refs).map((seg, i) => {
           if (!seg.ref) {
@@ -55,6 +66,7 @@ function Passage({ stimulus, refs, rangeRefs, questionNumber, onBackToQuestion }
           );
         })}
       </div>
+      )}
 
       {stimulus.footnotes?.length > 0 && (
         <ol className={styles.footnotes} aria-label="Footnotes">
@@ -67,8 +79,8 @@ function Passage({ stimulus, refs, rangeRefs, questionNumber, onBackToQuestion }
 }
 
 /**
- * The passages of a set, as printed: line breaks kept, every fifth line
- * numbered, and the lines the current question cites banded, bracketed and
+ * The passages of a set: poems line by line as printed, prose as wrapping
+ * paragraphs (ProseFlow), every fifth line numbered, and the lines the current question cites banded, bracketed and
  * labelled. focusRange() moves keyboard and screen reader focus to a range.
  */
 const PassageReader = forwardRef(function PassageReader(

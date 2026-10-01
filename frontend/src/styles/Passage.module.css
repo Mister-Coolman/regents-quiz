@@ -117,6 +117,87 @@
   margin-left: 1.5em;
 }
 
+/* ---- Prose: wrapping paragraphs, numbers in the margin ---- */
+.flow {
+  position: relative;
+  font-size: 17px;
+  line-height: 1.6;
+  letter-spacing: -0.012em;
+}
+
+.para {
+  margin: 0 0 0.9em;
+  padding-left: 3em;
+}
+.para[data-indent="true"] {
+  text-indent: 1.5em;
+}
+.para[data-gap="true"] {
+  margin-top: 1.8em;
+}
+
+.flowStart {
+  white-space: nowrap;
+}
+
+/* Absolutely placed with no top: it keeps the height of the word it sits
+   with, and moves to the margin. */
+.flowNum {
+  position: absolute;
+  left: 0;
+  width: 2.2em;
+  text-align: right;
+  text-indent: 0;
+  font-family: var(--font-numeral);
+  font-size: 14px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.flowCited {
+  background: var(--cite);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  padding: 2px 0;
+}
+
+.flowLabel {
+  margin: 0 6px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0;
+  scroll-margin: 80px 0;
+}
+.flowLabel:focus {
+  outline: none;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--link);
+}
+
+.flowBack {
+  margin: 0 8px;
+  min-height: 0;
+  padding: 15px 0;          /* a 44px tap height; inline padding doesn't push lines apart */
+  line-height: 1;
+  text-indent: 0;
+  vertical-align: baseline;
+}
+
+/* The bracket, in the margin beside the cited text. */
+.flowBar {
+  position: absolute;
+  left: 2.55em;
+  width: 2px;
+  background: var(--ink);
+}
+
+.excerpt .flow {
+  font-size: 16px;
+}
+.excerpt .para {
+  padding-left: 2.6em;
+}
+
 /* ---- Cited lines: band + ink bracket + label, never colour alone ---- */
 .cited {
   margin: 12px 0 12px -10px;
@@ -205,5 +286,17 @@
   .num {
     width: 1.8em;
     line-height: calc(16px * 1.6);
+  }
+  .flow {
+    font-size: 16px;
+  }
+  .para {
+    padding-left: 2.4em;
+  }
+  .flowNum {
+    width: 1.7em;
+  }
+  .flowBar {
+    left: 2em;
   }
 }
