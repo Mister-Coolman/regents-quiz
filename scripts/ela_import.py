@@ -362,7 +362,10 @@ def main():
         print(f"[extract warning] {w}")
     bundle = from_extractor(raw)
     for fig in bundle.get("figures") or []:
-        print(f"[import] not imported: figure in passage {fig.get('passage')} on page {fig.get('page')}")
+        # ela_extract.py counts pages from 0; people count from 1.
+        page = fig.get("page")
+        print(f"[import] not imported: figure in passage {fig.get('passage')} on page "
+              f"{page + 1 if isinstance(page, int) else page}")
     warnings = []
     errors = check_bundle(bundle, bundle_dir, args.allow_partial, warnings)
     for w in warnings:

@@ -16,7 +16,14 @@ scripts/ela_out/ (git-ignored; the repo is public). Never move it into a
 tracked path.
 
 Usage (run from scripts/):
-  python ela_extract.py 626          # June 2026 -> ela_out/626/
+  python ela_extract.py 626 --download   # fetch the exam PDF and scoring key first
+  python ela_extract.py 626              # June 2026 -> ela_out/626/
+  python ela_extract.py 825 --diagnose   # print the layout facts the parser relies on
+
+Each exam's files live in pdfs/ela/<code>/: the exam PDF (*exam*.pdf) and
+the scoring key workbook (*sk*.xlsx). --download tries NYSED's usual names;
+if they've changed, save the two files there by hand from
+https://www.nysedregents.org/hsela/.
 """
 import argparse
 import html
@@ -27,6 +34,8 @@ import sys
 import zipfile
 from xml.etree import ElementTree
 
+import glob
+
 import numpy as np
 import pymupdf as fitz
 
@@ -35,9 +44,57 @@ PDF_DIR = os.path.join(BASE_DIR, "pdfs", "ela")
 OUT_DIR = os.path.join(BASE_DIR, "ela_out")
 MAPS_PATH = os.path.join(BASE_DIR, "..", "docs", "ela", "research", "maps.json")
 
+# The 6 most recent administrations (owner decision, 2026-10-01).
 EXAMS = {
-    "626": {"month": "June", "year": 2026, "stem": "reela-62026"},
+    "125": {"month": "January", "year": 2025},
+    "625": {"month": "June", "year": 2025},
+    "825": {"month": "August", "year": 2025},
+    "126": {"month": "January", "year": 2026},
+    "626": {"month": "June", "year": 2026},
+    "826": {"month": "August", "year": 2026},
 }
+MONTH_NO = {"January": 1, "June": 6, "August": 8}
+NYSED_BASE = "https://www.nysedregents.org/hsela"
+
+
+def file_stems(meta):
+    """NYSED's file name stems for an administration, most likely first."""
+    mmyyyy = f"{MONTH_NO[meta['month']]}{meta['year']}"
+    return [f"reela-{mmyyyy}", f"reela{mmyyyy}"]
+
+
+def exam_files(code):
+    """(exam PDF, scoring key) in pdfs/ela/<code>/, whatever they're named."""
+    src = os.path.join(PDF_DIR, code)
+    pdfs = sorted(p for p in glob.glob(os.path.join(src, "*exam*.pdf")))
+    keys = sorted(glob.glob(os.path.join(src, "*sk*.xlsx")))
+    if not pdfs or not keys:
+        sys.exit(f"[ela] need the exam PDF (*exam*.pdf) and scoring key (*sk*.xlsx) in {src}; "
+                 f"try --download, or save them from {NYSED_BASE}/")
+    return pdfs[0], keys[0]
+
+
+def download(code, meta):
+    import requests
+    src = os.path.join(PDF_DIR, code)
+    os.makedirs(src, exist_ok=True)
+    for suffix in ("-exam.pdf", "-sk.xlsx"):
+        for stem in file_stems(meta):
+            url = f"{NYSED_BASE}/{code}/{stem}{suffix}"
+            resp = requests.get(url, timeout=60)
+            if resp.ok and len(resp.content) > 1000:
+                with open(os.path.join(src, stem + suffix), "wb") as f:
+                    f.write(resp.content)
+                print(f"[ela] downloaded {url}")
+                break
+        else:
+            print(f"[ela] couldn't find {suffix} for {code} (tried {', '.join(file_stems(meta))}); "
+                  f"save it by hand from {NYSED_BASE}/ into {src}")
+
+
+def near(a, b, tol=0.6):
+    """Font sizes differ by a few tenths between years and PDF exports."""
+    return abs((a or 0) - b) <= tol
 
 BODY_SIZE = 11.5          # passage and question text
 HEADING_SIZE = 14.0       # "Reading Comprehension Passage A" and titles
@@ -139,7 +196,7 @@ def extract_passages(doc, part1_pages):
         lines = page_lines(doc[pno], pno)
         for l in lines:
             t = l.text.strip()
-            if l.size == HEADING_SIZE and t.startswith("Reading Comprehension Passage"):
+            if near(l.size, HEADING_SIZE) and t.startswith("Reading Comprehension Passage"):
                 cur = {"label": t.rsplit(" ", 1)[-1], "heading": [], "body": [], "numbers": [],
                        "foot": [], "attribution": [], "pages": [pno], "questions_area": []}
                 passages.append(cur)
@@ -153,7 +210,7 @@ def extract_passages(doc, part1_pages):
                 cur["foot"].append(l)
                 continue
             if state == "title":
-                if l.size == HEADING_SIZE:
+                if near(l.size, HEADING_SIZE):
                     cur["heading"].append(l)
                     continue
                 state = "body"
@@ -286,7 +343,7 @@ def crop_question(doc, block, out_path):
 
 
 LINE_REF_PATTERNS = [
-    (re.compile(r"\blines?\s+(\d+)\s+(?:through|to|-|–)\s+(\d+)", re.I), "range"),
+    (re.compile(r"\blines?\s+(\d+)(?:\s+(?:through|to)\s+|\s*[-–]\s*)(\d+)", re.I), "range"),
     (re.compile(r"\blines?\s+(\d+)\s+and\s+(\d+)", re.I), "pair"),
     (re.compile(r"\blines?\s+(\d+)\b", re.I), "single"),
 ]
@@ -489,17 +546,55 @@ breaks), then each question crop against its parsed stem, key and cited lines.</
 
 # ---------------------------------------------------------------- main
 
+def diagnose(doc, part1_pages):
+    """The layout facts the parser depends on, for an exam it can't read.
+    No passage text is printed beyond headings and the first words of lines."""
+    from collections import Counter
+    print(f"[diag] {len(doc)} pages; Part 1 pages (0-based): {part1_pages}")
+    if not part1_pages:
+        for pno, page in enumerate(doc):
+            heads = [l.strip() for l in page.get_text().splitlines() if l.strip().startswith("Part")]
+            if heads:
+                print(f"[diag] page {pno}: {heads[:4]}")
+        return
+    sizes, margin_nums, qnum_x, choice_x = Counter(), [], Counter(), Counter()
+    for pno in part1_pages:
+        for l in page_lines(doc[pno], pno):
+            sizes[l.size] += 1
+            t = l.text.strip()
+            if l.size >= 12.5:
+                print(f"[diag] p{pno} heading size {l.size} x={l.x0:.0f}: {t[:60]!r}")
+            if t.isdigit() and l.x0 < 120:
+                margin_nums.append((pno, round(l.x0), t))
+            if NUM_RE.match(t) and not t.isdigit():
+                qnum_x[round(l.x0)] += 1
+            if CHOICE_RE.match(t):
+                choice_x[round(l.x0)] += 1
+    print(f"[diag] font sizes (size: lines): {dict(sorted(sizes.items()))}")
+    print(f"[diag] expected: heading {HEADING_SIZE}, body {BODY_SIZE}, footnotes <= {FOOTNOTE_MAX_SIZE}")
+    print(f"[diag] margin numbers (page, x, n), first 12: {margin_nums[:12]}; parser wants x < {LINE_NO_MAX_X}")
+    print(f"[diag] x of lines starting with a number (top 6): {qnum_x.most_common(6)}; parser wants {QUESTION_NO_X}")
+    print(f"[diag] x of choice lines '(1)'... (top 6): {choice_x.most_common(6)}")
+    print(f"[diag] page width {doc[part1_pages[0]].rect.width:.0f}, footer cut at y={FOOTER_TOP}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("code", help="administration code, e.g. 626 for June 2026")
+    parser.add_argument("--download", action="store_true", help="fetch the exam PDF and scoring key first")
+    parser.add_argument("--diagnose", action="store_true", help="print the layout facts the parser relies on")
     args = parser.parse_args()
+    if args.code not in EXAMS:
+        sys.exit(f"[ela] unknown code {args.code}; add it to EXAMS (known: {', '.join(EXAMS)})")
     meta = EXAMS[args.code]
-    src = os.path.join(PDF_DIR, args.code)
+    if args.download:
+        download(args.code, meta)
+    exam_pdf, key_xlsx = exam_files(args.code)
     out = os.path.join(OUT_DIR, args.code)
     os.makedirs(os.path.join(out, "crops"), exist_ok=True)
     os.makedirs(os.path.join(out, "pages"), exist_ok=True)
 
-    doc = fitz.open(os.path.join(src, f"{meta['stem']}-exam.pdf"))
+    doc = fitz.open(exam_pdf)
     part1_pages, started = [], False
     for pno, page in enumerate(doc):
         text = page.get_text()
@@ -510,6 +605,12 @@ def main():
         if started:
             part1_pages.append(pno)
 
+    if args.diagnose:
+        diagnose(doc, part1_pages)
+        return
+    if not part1_pages:
+        sys.exit("[ela] no page with a 'Part 1' heading; run with --diagnose and share the output")
+
     raw = extract_passages(doc, part1_pages)
     stimuli, mismatches = [], []
     for p in raw:
@@ -517,8 +618,10 @@ def main():
         stimuli.append(s)
         mismatches += [f"passage {p['label']}: {m}" for m in mm]
 
-    key = read_key(os.path.join(src, f"{meta['stem']}-sk.xlsx"))
-    standards = json.load(open(MAPS_PATH)).get(args.code, {}).get("qs", {})
+    key = read_key(key_xlsx)
+    standards = {}
+    if os.path.exists(MAPS_PATH):
+        standards = json.load(open(MAPS_PATH)).get(args.code, {}).get("qs", {})
 
     questions = []
     for p, s in zip(raw, stimuli):
@@ -558,7 +661,7 @@ def main():
         page_pngs[pno] = name
 
     bundle = {"exam": {"subject": "ELA", **{k: meta[k] for k in ("month", "year")}, "code": args.code,
-                       "source": f"https://www.nysedregents.org/hsela/{args.code}/{meta['stem']}-exam.pdf"},
+                       "source": f"{NYSED_BASE}/{args.code}/{os.path.basename(exam_pdf)}"},
               "stimuli": stimuli, "questions": questions, "figures": figures,
               "gates": {"errors": errors, "warnings": warnings}}
     with open(os.path.join(out, "bundle.json"), "w") as f:
