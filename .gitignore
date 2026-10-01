@@ -30,3 +30,7 @@ __pycache__/
 
 # Originals kept when recutting clipped crops
 /scripts/recrop_backup/
+
+# Question-number backfill outputs (regenerate with the two scripts)
+/scripts/question_numbers_*.csv
+/scripts/question_numbers_vlm_cache.json

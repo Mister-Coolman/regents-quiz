@@ -110,7 +110,7 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
   }, [storageKey, idx, results, revealed, hintsUsed, finished]);
 
   const current = questions[idx];
-  const { subject = '', month = '', year = '' } = current;
+  const { subject = '', month = '', year = '', question_no: questionNo } = current;
   // Constructed-response questions come back ungraded (correct: null) -- they
   // are marked with a rubric -- so they count toward neither score nor misses.
   const graded = questions.filter(q => typeof results[q.id] === 'boolean');
@@ -271,7 +271,10 @@ export default function QuizPlayer({ questions = [], sessionId, onFinish }) {
         </button>
         <div className={styles.meta}>
           <SubjectMark subject={subject} size={12} />
-          <span>{[subject, [month, year].filter(Boolean).join(' ')].filter(Boolean).join(', ')}</span>
+          <span>
+            {[subject, [month, year].filter(Boolean).join(' '), questionNo && `question ${questionNo}`]
+              .filter(Boolean).join(', ')}
+          </span>
         </div>
       </div>
 

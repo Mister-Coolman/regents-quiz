@@ -31,6 +31,10 @@ def init_db():
     existing_question_cols = {row[1] for row in cursor.execute("PRAGMA table_info(questions)")}
     if "rubric" not in existing_question_cols:
         cursor.execute("ALTER TABLE questions ADD COLUMN rubric TEXT")
+    # The question's number on its original exam, backfilled from the exam
+    # PDFs by scripts/backfill_question_numbers.py. NULL where unreadable.
+    if "question_no" not in existing_question_cols:
+        cursor.execute("ALTER TABLE questions ADD COLUMN question_no INTEGER")
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS sessions (
         session_id   TEXT PRIMARY KEY,

@@ -93,6 +93,11 @@ def _source(q, multi_subject):
     return f"{q.get('subject', '')}, {label}" if multi_subject else label
 
 
+def _number(q):
+    """ "#21" for a question whose original number is known, else "". """
+    return f"#{q['question_no']}" if q.get("question_no") else ""
+
+
 def _set_title(questions):
     subjects = []
     for q in questions:
@@ -196,7 +201,8 @@ class ExamPDF(FPDF):
         self.cell(self.get_string_width(f"Item {n}") + 1.5, 5, f"Item {n}", 0, 0)
         self.set_font("Times", "", 10)
         self.set_text_color(*INK_2)
-        self.cell(0, 5, _text(f"   {_source(q, multi_subject)} Regents"), 0, 0)
+        number = f", question {q['question_no']}" if q.get("question_no") else ""
+        self.cell(0, 5, _text(f"   {_source(q, multi_subject)} Regents{number}"), 0, 0)
         self.set_text_color(*INK)
         self.set_xy(MARGIN_X, y + CAPTION_H)
 
@@ -252,8 +258,8 @@ def _cover(pdf, title, questions, mcqs, crqs):
                      f"{_plural(len(crqs), 'constructed-response question')}. "
                      "Write your work and answer in the space below each question. "
                      "Show all work: a correct answer with no work shown may not receive full credit.")
-    notes.append("Each item is labelled with the exam it came from. The bold number printed "
-                 "with a question is its number on that exam, not its place in this set.")
+    notes.append("Each item is labelled with the exam it came from and its number on that "
+                 "exam, which is the bold number printed with the question.")
     subjects = {q.get("subject") for q in questions}
     if subjects & MATH_SUBJECTS:
         tools = "a graphing calculator and a straightedge (ruler)"
@@ -366,7 +372,7 @@ def _answer_sheet(pdf, mcqs, has_crqs, multi_subject):
         pdf.cell(12, 2 * r, str(n), 0, 0, "R")
         pdf.set_font("Times", "", 8)
         pdf.set_text_color(*INK_2)
-        pdf.cell(label_w, 2 * r, _text("  " + _source(q, multi_subject)), 0, 0, "L")
+        pdf.cell(label_w, 2 * r, _text("  " + " ".join(filter(None, (_source(q, multi_subject), _number(q))))), 0, 0, "L")
         pdf.set_text_color(*INK)
         pdf.set_line_width(0.3)
         for k in range(4):
@@ -412,7 +418,7 @@ def _answer_key(pdf, numbered, multi_subject):
         pdf.set_font("Times", "B", 11)
         pdf.cell(widths[0], 7, str(n), 0, 0, "L")
         pdf.set_font("Times", "", 11)
-        pdf.cell(widths[1], 7, _text(_source(q, multi_subject) + " Regents"), 0, 0, "L")
+        pdf.cell(widths[1], 7, _text(" ".join(filter(None, (_source(q, multi_subject) + " Regents", _number(q))))), 0, 0, "L")
         pdf.cell(widths[2], 7, kind, 0, 0, "L")
         pdf.set_font("Times", "B" if q.get("type") == "MCQ" else "I", 11)
         pdf.cell(widths[3], 7, _text(answer), 0, 1, "L")
