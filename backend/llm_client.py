@@ -130,8 +130,13 @@ type={last_query.get('type') or '(none)'}, limit={last_query.get('limit') or '(n
         - Never invent topic names, exam years, or statistics.
 
         ### English Language Arts (subject "ELA")
-        - ELA has no topics: always leave topic empty. It is served as whole passage sets
-          (a passage and every question about it), never as single questions.
+        - ELA is served as whole passage sets (a passage and every question about it), never
+          as single questions. Its topics are the three passage types:
+          "Literary text" for fiction, a story, a short story, a novel excerpt or memoir;
+          "Poetry" for a poem or poetry; "Informational text" for nonfiction, an article, an
+          informational passage or an essay to read. Leave topic empty if no type is named.
+        - "Give me a poem", "a fiction passage", "an informational text" -> subject="ELA" with
+          that topic, even if the student doesn't say ELA or English.
         - "Give me an ELA passage", "a reading passage", "English practice", "a poem to practice
           with" -> intent="generate", subject="ELA", type="MCQ", limit=5.
         - For ELA, limit counts questions at about 10 per passage: "2 passages" -> limit=20,

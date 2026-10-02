@@ -333,3 +333,19 @@ def test_unnumbered_subheading_passes_the_gates(tmp_path):
     lines.insert(6, {"n": None, "text": "A Subheading", "heading": True})
     assert ela_import.check_bundle(bundle, str(tmp_path), allow_partial=True) == []
     assert ela_import._line(lines[6]) == {"n": None, "text": "A Subheading", "heading": True}
+
+
+def test_passage_type_filter(synth_client, parsed, ela_on):
+    parsed(subject="ELA", topic="Poetry", qtype="MCQ", limit=20)
+    body = ask(synth_client, text="give me 2 poems")
+    assert [s["kind"] for s in body["stimuli"]] == ["poem"]
+    # A type named without "ELA" still reaches ELA.
+    parsed(subject="", topic="Literary text", qtype="", limit=5)
+    body = ask(synth_client, sid="ela-session-0009", text="a fiction passage")
+    assert [s["kind"] for s in body["stimuli"]] == ["literary"]
+    parsed(subject="ELA", topic="Informational text", qtype="MCQ", limit=5)
+    body = ask(synth_client, text="an article")
+    assert "questions" not in body and "No informational text passages" in body["response"]
+    parsed(intent="list_topics", subject="ELA", topic="", qtype="", limit=0)
+    listing = ask(synth_client, text="what ELA practice")["response"]
+    assert "Poetry: <b>1</b>" in listing and "Literary text: <b>1</b>" in listing
