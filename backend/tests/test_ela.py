@@ -78,7 +78,7 @@ def test_bundle_gates(tmp_path):
         change(b)
         return ela_import.check_bundle(b, str(tmp_path), allow_partial=True)
 
-    assert broken(lambda b: b["stimuli"][0]["lines"][3].update(text="costs $5"))
+    assert not broken(lambda b: b["stimuli"][0]["lines"][3].update(text="costs $5"))  # prices are fine
     assert broken(lambda b: b["stimuli"][0]["lines"][3].update(text="a || b"))
     assert broken(lambda b: b["stimuli"][0]["lines"][3].update(n=40))           # not monotonic
     assert broken(lambda b: b["questions"][0].update(question_text="In lines 30 through 31, the"))

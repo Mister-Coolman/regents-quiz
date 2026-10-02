@@ -254,8 +254,9 @@ def check_bundle(bundle, bundle_dir, allow_partial=False, warnings=None):
                 errors.append(f"{tag}: cites line(s) {missing} that passage {label} doesn't have")
 
     for where, text in _texts(bundle):
-        if "$" in text or "||" in text:
-            errors.append(f"{where}: contains '$' or '||'")
+        # Passages and stems render as plain text, so a price's '$' is fine.
+        if "||" in text:
+            errors.append(f"{where}: contains '||'")
     return errors
 
 

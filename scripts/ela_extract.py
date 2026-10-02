@@ -631,8 +631,10 @@ def gate(stimuli, questions, mismatches, key):
         if not s["attribution"]:
             errors.append(f"passage {s['label']}: no attribution")
         for ln in s["lines"]:
-            if "$" in ln["text"] or "||" in ln["text"]:
-                errors.append(f"passage {s['label']} line {ln['n']}: contains '$' or '||'")
+            # '$' is fine here (prices in an article): passages render as
+            # plain text. '||' was the old session-snapshot separator.
+            if "||" in ln["text"]:
+                errors.append(f"passage {s['label']} line {ln['n']}: contains '||'")
     for q in questions:
         if not all(q["choices"]):
             errors.append(f"Q{q['no']}: missing choice text {q['choices']}")
@@ -643,8 +645,8 @@ def gate(stimuli, questions, mismatches, key):
             if not (1 <= r["start"] <= r["end"] <= stim["line_count"]):
                 errors.append(f"Q{q['no']}: cites lines {r['start']}-{r['end']} outside passage {q['passage']} (1-{stim['line_count']})")
         for t in [q["stem"]] + q["choices"]:
-            if "$" in t or "||" in t:
-                errors.append(f"Q{q['no']}: contains '$' or '||'")
+            if "||" in t:
+                errors.append(f"Q{q['no']}: contains '||'")
         if not q["standard"]:
             warnings.append(f"Q{q['no']}: no standard in maps.json")
         if re.search(r"\b(photograph|image|graphic|illustration|picture)\b", q["stem"], re.I):
