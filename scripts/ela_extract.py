@@ -266,6 +266,7 @@ def build_stimulus(p):
         "title": join_title(title_line),
         "title_notes": title_notes,
         "intro": join_title(intro) or None,
+        "intro_notes": [n for l in intro for n in l.notes],
         "lines": lines,
         "line_count": len(lines),
         "printed_numbers": [int(n.text) for n in p["numbers"]],
@@ -315,7 +316,12 @@ def question_blocks(doc, passage, first_no):
     shift between years and with right-aligned two-digit numbers. A page
     whose question area spans the full width is read as one column."""
     lines = passage["questions_area"]
-    full_width = {l.page for l in lines if l.x0 < COLUMN_SPLIT - 40 and l.x1 > COLUMN_SPLIT + 40}
+    # One column only if nothing on the page starts in the right-hand column
+    # (a single wide line, like the directions, doesn't make a page one column).
+    pages = {l.page for l in lines}
+    full_width = {pg for pg in pages
+                  if not any(l.page == pg and l.x0 >= COLUMN_SPLIT for l in lines)
+                  and any(l.page == pg and l.x1 > COLUMN_SPLIT + 40 for l in lines)}
 
     def col(l):
         return 0 if l.page in full_width or l.x0 < COLUMN_SPLIT else 1
@@ -485,13 +491,15 @@ def gate(stimuli, questions, mismatches, key):
     errors, warnings = list(mismatches), []
     nos = [q["no"] for q in questions]
     if nos != list(range(1, 25)):
-        errors.append(f"expected questions 1-24, got {nos}")
+        errors.append(f"expected questions 1-24, got {nos}; the next one wasn't found at the left edge of a "
+                      f"column after question {nos[-1] if nos else 0} (run --diagnose)")
     for s in stimuli:
         if s["printed_numbers"] != list(range(5, s["line_count"] + 1, 5))[:len(s["printed_numbers"])]:
             errors.append(f"passage {s['label']}: printed numbers {s['printed_numbers']} aren't every 5th line")
         if s["line_count"] - (s["printed_numbers"][-1] if s["printed_numbers"] else 0) >= 5:
             errors.append(f"passage {s['label']}: {s['line_count']} lines but last printed number is {s['printed_numbers'][-1:]}")
-        markers = sorted({n["n"] for ln in s["lines"] for n in ln["notes"]} | {n["n"] for n in s["title_notes"]})
+        markers = sorted({n["n"] for ln in s["lines"] for n in ln["notes"]} | {n["n"] for n in s["title_notes"]}
+                         | {n["n"] for n in s.get("intro_notes", [])})
         glosses = sorted(f["n"] for f in s["footnotes"])
         if markers != glosses:
             errors.append(f"passage {s['label']}: footnote markers {markers} != glosses {glosses}")
