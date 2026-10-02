@@ -24,6 +24,10 @@ Live at **https://nystateregentsprep.netlify.app/**
     explanation
 - Math rendered with KaTeX (via `react-markdown` + `remark-math` +
   `rehype-katex`), so explanations with equations render properly
+- Chat history: past chats are saved in the browser and listed under "Chats",
+  grouped by day, and can be reopened or deleted. Each practice set carries a
+  signed token (`backend/set_tokens.py`), so a reopened chat can still check
+  answers after a deploy has wiped the server's session tables
 - PDF export of a math practice set
 - English Language Arts (ELA) Part 1 reading practice, behind the
   `ELA_ENABLED` flag: whole passage sets (a passage and every question about

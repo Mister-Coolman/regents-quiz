@@ -77,7 +77,7 @@ function ExplanationPanel({ text, defaultOpen = false }) {
   );
 }
 
-export default function QuizPlayer({ questions = [], stimuli = [], sessionId, onFinish }) {
+export default function QuizPlayer({ questions = [], stimuli = [], sessionId, setToken, onFinish }) {
   // 1) Guard against empty questions
   if (!Array.isArray(questions) || questions.length === 0) {
     return (
@@ -165,7 +165,11 @@ export default function QuizPlayer({ questions = [], stimuli = [], sessionId, on
       const res = await fetch(`${apiBase}/api/check`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, question_id: current.id, answer: String(selected) }),
+        // set_token lets a chat reopened from history check answers even
+        // after the server's record of this session is gone.
+        body: JSON.stringify({
+          session_id: sessionId, question_id: current.id, answer: String(selected), set_token: setToken,
+        }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok || !body) {

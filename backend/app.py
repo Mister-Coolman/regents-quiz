@@ -17,6 +17,7 @@ load_dotenv()
 
 import config
 import db
+import set_tokens
 from answers import check_answer, public_question
 from llm_client import clean_topic, parse_query_with_ollama, take_llm_call
 from pdf_utils import generate_pdf, pdf_filename
@@ -221,6 +222,7 @@ def ela_response(sess_id, user_query, intent, topic, qtype, limit, reply):
         "response": bot_resp,
         "questions": [public_question(q) for q in questions],
         "stimuli": stimuli,
+        "set_token": set_tokens.sign(q["id"] for q in questions),
     })
 
 
@@ -376,7 +378,9 @@ def query():
         "response": bot_resp,
         "pdf_url": download_url,
         # Answers stay on the server until /api/check.
-        "questions": [public_question(q) for q in questions]
+        "questions": [public_question(q) for q in questions],
+        # Lets this set be checked later from a chat reopened from history.
+        "set_token": set_tokens.sign(q["id"] for q in questions),
     })
 
 
@@ -398,6 +402,10 @@ def check():
         return jsonify({"error": "Choose or type an answer first."}), 400
 
     q = db.fetch_served_question(sess_id, question_id)
+    # A chat reopened from the browser's history, perhaps after a deploy
+    # wiped the session tables, proves the set was served with its token.
+    if not q and question_id in set_tokens.verify(data.get("set_token")):
+        q = db.fetch_servable_question(question_id)
     if not q:
         return jsonify({"error": "That question isn't part of this chat. Ask for a new set."}), 404
     return jsonify(check_answer(q, answer))
@@ -454,6 +462,8 @@ def history(session_id):
         return jsonify([])
     rows = db.get_history(session_id)
     for row in rows:
+        if row["questions"]:
+            row["set_token"] = set_tokens.sign(q["id"] for q in row["questions"])
         row["questions"] = [public_question(q) for q in row["questions"]]
     # ELA rows also carry "stimuli": the passages for sets served to this
     # session, already reduced to what the reader shows.

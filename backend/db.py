@@ -181,6 +181,18 @@ def fetch_served_question(sess_id, question_id):
     return dict(row) if row else None
 
 
+def fetch_servable_question(question_id):
+    """The full question row if it may be graded at all (math, or ELA that
+    is switched on and not withdrawn). For checks backed by a signed set
+    token instead of this session's records."""
+    conn = get_conn()
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT q.* FROM questions q WHERE q.id = ? AND " + _servable_question("q"),
+                       (question_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def list_topics(subject):
     conn = get_conn()
     cur = conn.cursor()
