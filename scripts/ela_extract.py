@@ -233,9 +233,54 @@ def extract_passages(doc, part1_pages):
     return passages
 
 
+def fully_italic(l):
+    """Every visible character of the line is italic."""
+    covered = set()
+    for a, b in l.italic:
+        covered.update(range(a, b))
+    return bool(l.text.strip()) and all(i in covered for i, ch in enumerate(l.text) if not ch.isspace())
+
+
 def build_stimulus(p):
-    """Number the body lines and check them against the printed numbers."""
+    """Number the body lines and check them against the printed numbers.
+
+    Some exams open a passage with an italic introduction ("In this excerpt,
+    ...") that isn't part of the numbered text. Leading all-italic lines are
+    set aside as the intro when that makes the printed numbers line up."""
     body = p["body"]
+    lines, mismatches = number_lines(body, p["numbers"])
+    intro = []
+    lead = 0
+    while lead < len(body) and fully_italic(body[lead]):
+        lead += 1
+    if lead and mismatches:
+        trial, trial_mm = number_lines(body[lead:], p["numbers"])
+        if len(trial_mm) < len(mismatches):
+            intro, lines, mismatches = body[:lead], trial, trial_mm
+    title_line = p["heading"]
+    title_notes = [n for l in title_line for n in l.notes]
+    kind = {"A": "literary", "B": "poem", "C": "informational"}.get(p["label"], "unknown")
+    return {
+        "label": p["label"],
+        "kind": kind,
+        "title": join_title(title_line),
+        "title_notes": title_notes,
+        "intro": join_title(intro) or None,
+        "lines": lines,
+        "line_count": len(lines),
+        "printed_numbers": [int(n.text) for n in p["numbers"]],
+        "attribution": [{"text": l.text.strip(),
+                         "italic": [[a - (len(l.text) - len(l.text.lstrip())), b - (len(l.text) - len(l.text.lstrip()))]
+                                    for a, b in l.italic]}
+                        for l in p["attribution"]],
+        "footnotes": parse_footnotes(p["foot"]),
+        "pages": p["pages"],
+    }, mismatches
+
+
+def number_lines(body, numbers):
+    """Body lines numbered 1, 2, 3..., and where that disagrees with the
+    numbers printed in the margin."""
     lines, prev = [], None
     for idx, l in enumerate(body, start=1):
         gap = prev is not None and l.page == prev.page and l.y0 - prev.y0 > 20
@@ -251,49 +296,59 @@ def build_stimulus(p):
         })
         prev = l
     mismatches = []
-    for num in p["numbers"]:
+    for num in numbers:
         same_row = [ln for ln, b in zip(lines, body) if b.page == num.page and abs(b.y0 - num.y0) < 4]
         if len(same_row) != 1 or same_row[0]["n"] != int(num.text):
             mismatches.append(f"printed {num.text} on page {num.page} y={num.y0:.0f} "
                               f"matches {[x['n'] for x in same_row]}")
-    title_line = p["heading"]
-    title_notes = [n for l in title_line for n in l.notes]
-    kind = {"A": "literary", "B": "poem", "C": "informational"}.get(p["label"], "unknown")
-    return {
-        "label": p["label"],
-        "kind": kind,
-        "title": join_title(title_line),
-        "title_notes": title_notes,
-        "lines": lines,
-        "line_count": len(lines),
-        "printed_numbers": [int(n.text) for n in p["numbers"]],
-        "attribution": [{"text": l.text.strip(),
-                         "italic": [[a - (len(l.text) - len(l.text.lstrip())), b - (len(l.text) - len(l.text.lstrip()))]
-                                    for a, b in l.italic]}
-                        for l in p["attribution"]],
-        "footnotes": parse_footnotes(p["foot"]),
-        "pages": p["pages"],
-    }, mismatches
+    return lines, mismatches
 
 
 # ---------------------------------------------------------------- questions
 
-def question_blocks(doc, passage):
-    """Split the question area into questions by column, keeping each one's
-    lines and its rectangle on the page."""
-    by_page = {}
-    for l in passage["questions_area"]:
-        by_page.setdefault(l.page, []).append(l)
+def question_blocks(doc, passage, first_no):
+    """Split the question area into questions, in reading order.
+
+    A question starts at the line beginning with the next expected number
+    (first_no, first_no + 1, ...) at the left edge of its column. Matching
+    the sequence, rather than fixed x positions, copes with layouts that
+    shift between years and with right-aligned two-digit numbers. A page
+    whose question area spans the full width is read as one column."""
+    lines = passage["questions_area"]
+    full_width = {l.page for l in lines if l.x0 < COLUMN_SPLIT - 40 and l.x1 > COLUMN_SPLIT + 40}
+
+    def col(l):
+        return 0 if l.page in full_width or l.x0 < COLUMN_SPLIT else 1
+
+    ordered = sorted(lines, key=lambda l: (l.page, col(l), round(l.y0), l.x0))
+    left = {}
+    for l in ordered:
+        key = (l.page, col(l))
+        left[key] = min(left.get(key, 1e9), l.x0)
+
+    starts, expect = [], first_no
+    for i, l in enumerate(ordered):
+        m = NUM_RE.match(l.text)
+        if m and int(m.group(1)) == expect and l.x0 - left[(l.page, col(l))] < 15:
+            starts.append(i)
+            expect += 1
+
     blocks = []
-    for pno, lines in by_page.items():
-        for col in (0, 1):
-            col_lines = [l for l in lines if (l.x0 < COLUMN_SPLIT) == (col == 0)]
-            starts = [l for l in col_lines if abs(l.x0 - QUESTION_NO_X[col]) < 3 and NUM_RE.match(l.text)]
-            for i, s in enumerate(starts):
-                end_y = starts[i + 1].y0 if i + 1 < len(starts) else 10_000
-                own = [l for l in col_lines if s.y0 <= l.y0 < end_y]
-                blocks.append({"no": int(NUM_RE.match(s.text).group(1)), "page": pno, "col": col, "lines": own})
-    blocks.sort(key=lambda b: b["no"])
+    for k, i in enumerate(starts):
+        end = starts[k + 1] if k + 1 < len(starts) else len(ordered)
+        own = ordered[i:end]
+        head = ordered[i]
+        segment = [l for l in own if (l.page, col(l)) == (head.page, col(head))]
+        blocks.append({
+            "no": int(NUM_RE.match(head.text).group(1)),
+            "page": head.page,
+            "col": "full" if head.page in full_width else col(head),
+            "lines": own,
+            # Lines that ran on into the next column or page: the crop shows
+            # only the first part, so the gate stops on these.
+            "spills": len(segment) != len(own),
+            "crop_lines": segment,
+        })
     return blocks
 
 
@@ -301,7 +356,7 @@ def parse_question(block):
     """Stem and choices from the lines, in reading order. Choices may sit in
     two sub-columns ((1)(3) / (2)(4)) and wrap onto indented lines."""
     stem, choices, anchors = [], {}, {}
-    for i, l in enumerate(sorted(block["lines"], key=lambda l: (round(l.y0), l.x0))):
+    for i, l in enumerate(block["lines"]):     # already in reading order
         t = l.text.strip()
         if i == 0:
             t = re.sub(r"^\d{1,2}\s+", "", t)   # the question number
@@ -323,9 +378,10 @@ def parse_question(block):
 def crop_question(doc, block, out_path):
     """Render the question's column band at CROP_DPI and trim to the ink."""
     page = doc[block["page"]]
-    xs = [l.x0 for l in block["lines"]] + [l.x1 for l in block["lines"]]
-    ys = [l.y0 for l in block["lines"]] + [l.y1 for l in block["lines"]]
-    col_x0, col_x1 = (30, COLUMN_SPLIT) if block["col"] == 0 else (COLUMN_SPLIT, 590)
+    crop_lines = block.get("crop_lines") or block["lines"]
+    xs = [l.x0 for l in crop_lines] + [l.x1 for l in crop_lines]
+    ys = [l.y0 for l in crop_lines] + [l.y1 for l in crop_lines]
+    col_x0, col_x1 = {0: (30, COLUMN_SPLIT), 1: (COLUMN_SPLIT, 590), "full": (30, 590)}[block["col"]]
     rect = fitz.Rect(max(col_x0, min(xs) - 4), min(ys) - 4, min(col_x1, max(xs) + 4), max(ys) + 4)
     pix = page.get_pixmap(clip=rect, dpi=CROP_DPI, colorspace=fitz.csGRAY)
     img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
@@ -624,8 +680,14 @@ def main():
         standards = json.load(open(MAPS_PATH)).get(args.code, {}).get("qs", {})
 
     questions = []
+    next_no, spilled = 1, []
     for p, s in zip(raw, stimuli):
-        for b in question_blocks(doc, p):
+        blocks = question_blocks(doc, p, next_no)
+        if blocks:
+            next_no = blocks[-1]["no"] + 1
+        for b in blocks:
+            if b["spills"]:
+                spilled.append(b["no"])
             stem, choices = parse_question(b)
             crop_name = f"crops/q{b['no']:02d}.png"
             rect, w, h = crop_question(doc, b, os.path.join(out, crop_name))
@@ -651,6 +713,8 @@ def main():
             figures.append({"page": pno, "bbox": [round(v) for v in info["bbox"]], "passage": owner})
 
     errors, warnings = gate(stimuli, questions, mismatches, key)
+    for no in spilled:
+        errors.append(f"Q{no}: continues into the next column or page; its crop would be incomplete")
     for f in figures:
         warnings.append(f"passage {f['passage']}: image on page {f['page'] + 1} at {f['bbox']}; decide whether it is decorative")
 
