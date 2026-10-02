@@ -55,6 +55,7 @@ export function Line({ line, showNumber = true }) {
       className={styles.line}
       data-stanza={line.stanza_break ? 'true' : undefined}
       data-indent={line.indent ? 'true' : undefined}
+      data-heading={line.heading ? 'true' : undefined}
     >
       <span className={styles.num} data-fifth={fifth ? 'true' : undefined} aria-hidden="true">
         {showNumber ? line.n : ''}

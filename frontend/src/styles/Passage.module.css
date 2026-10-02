@@ -129,6 +129,12 @@
   margin-left: 1.5em;
 }
 
+/* A subheading inside a passage: printed in bold, with no line number. */
+.line[data-heading="true"] {
+  margin-top: 0.8em;
+  font-weight: 600;
+}
+
 /* A footnote marker, as printed. line-height 0 keeps it from opening up
    the line it sits in. */
 .mark {

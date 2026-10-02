@@ -39,6 +39,7 @@ bundle.json, as this script expects it:
 "stanza_break": true marks a blank line before that line; "indent": true an
 indented printed line. Bundles written by ela_extract.py are translated into
 this shape first (from_extractor).
+"heading": true marks an unnumbered subheading (set in bold).
 "n" is the printed line number for every line of a numbered passage (null
 for unnumbered lines such as a title inside the text). "line_refs" is
 optional: when present it is used as given (a difference from what
@@ -127,6 +128,8 @@ def from_extractor(raw):
                 out["stanza_break"] = True
             if line.get("indent"):
                 out["indent"] = True
+            if line.get("heading"):
+                out["heading"] = True
             if line.get("notes"):
                 out["notes"] = [{"n": n["n"], "at": n["at"]} for n in line["notes"]]
             lines.append(out)
@@ -262,6 +265,8 @@ def _line(line):
         out["stanza_break"] = True
     if line.get("indent"):
         out["indent"] = True
+    if line.get("heading"):
+        out["heading"] = True
     if line.get("notes"):
         out["notes"] = line["notes"]
     return out

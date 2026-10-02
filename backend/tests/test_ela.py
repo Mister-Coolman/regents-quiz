@@ -325,3 +325,11 @@ def test_footnote_markers_reach_the_reader_without_unverifying(synth_client, ela
             break
     assert stim["intro_notes"] == [{"n": 1, "at": 15}] and stim["title_notes"] == [{"n": 2, "at": 9}]
     assert stim["lines"][2]["notes"] == [{"n": 3, "at": 6}]
+
+
+def test_unnumbered_subheading_passes_the_gates(tmp_path):
+    bundle = ela_bundle(str(tmp_path))
+    lines = bundle["stimuli"][0]["lines"]
+    lines.insert(6, {"n": None, "text": "A Subheading", "heading": True})
+    assert ela_import.check_bundle(bundle, str(tmp_path), allow_partial=True) == []
+    assert ela_import._line(lines[6]) == {"n": None, "text": "A Subheading", "heading": True}

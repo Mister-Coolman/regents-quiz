@@ -121,16 +121,20 @@ class Line:
         self.x0, self.y0, self.x1, self.y1 = bbox
         self.size = size
         text, italic, notes = "", [], []
-        for run_text, is_italic, is_super in runs:
+        bold_flags = []
+        for run_text, is_italic, is_super, *rest in runs:
             if is_super and run_text.strip().isdigit():
                 notes.append({"n": int(run_text.strip()), "at": len(text.rstrip())})
                 continue
+            if run_text.strip():
+                bold_flags.append(bool(rest and rest[0]))
             if is_italic and run_text.strip():
                 italic.append([len(text), len(text) + len(run_text)])
             text += run_text
         self.text = text.rstrip()
         self.italic = [[a, min(b, len(self.text))] for a, b in italic if a < len(self.text)]
         self.notes = notes
+        self.bold = bool(bold_flags) and all(bold_flags)
 
     def __repr__(self):
         return f"<p{self.page} {self.x0:.0f},{self.y0:.0f} {self.text[:40]!r}>"
@@ -156,7 +160,7 @@ def page_lines(page, pno):
                 if not chars:
                     continue
                 is_super = span["size"] < SUPERSCRIPT_MAX_SIZE and line["spans"][0]["size"] >= 10
-                runs.append(("".join(chars), bool(span["flags"] & 2), is_super))
+                runs.append(("".join(chars), bool(span["flags"] & 2), is_super, bool(span["flags"] & 16)))
                 if not is_super and size is None:
                     size = round(span["size"], 1)
             if runs and "".join(r[0] for r in runs).strip():
@@ -259,15 +263,22 @@ def build_stimulus(p):
     ...") that isn't part of the numbered text. Leading all-italic lines are
     set aside as the intro when that makes the printed numbers line up."""
     body = p["body"]
-    lines, mismatches = number_lines(body, p["numbers"])
-    intro = []
     lead = 0
     while lead < len(body) and fully_italic(body[lead]):
         lead += 1
-    if lead and mismatches:
-        trial, trial_mm = number_lines(body[lead:], p["numbers"])
-        if len(trial_mm) < len(mismatches):
-            intro, lines, mismatches = body[:lead], trial, trial_mm
+    # Simplest reading first: every line numbered; then the same without an
+    # italic intro; then anchored on the printed numbers, which lets a few
+    # lines (subheadings, captions) go unnumbered.
+    attempts = [(0, False)] + ([(lead, False)] if lead else []) + ([(lead, True)] if lead else []) + [(0, True)]
+    best = None
+    for skip, anchored in attempts:
+        lines, mismatches = number_lines(body[skip:], p["numbers"], anchored)
+        if best is None or len(mismatches) < len(best[2]):
+            best = (skip, lines, mismatches)
+        if not mismatches:
+            break
+    skip, lines, mismatches = best
+    intro = body[:skip]
     title_line = p["heading"]
     title, title_notes = join_with_notes(title_line)
     intro_text, intro_notes = join_with_notes(intro)
@@ -280,7 +291,7 @@ def build_stimulus(p):
         "intro": intro_text or None,
         "intro_notes": intro_notes,
         "lines": lines,
-        "line_count": len(lines),
+        "line_count": sum(1 for ln in lines if ln["n"] is not None),
         "printed_numbers": [int(n.text) for n in p["numbers"]],
         "attribution": [{"text": l.text.strip(),
                          "italic": [[a - (len(l.text) - len(l.text.lstrip())), b - (len(l.text) - len(l.text.lstrip()))]
@@ -291,14 +302,73 @@ def build_stimulus(p):
     }, mismatches
 
 
-def number_lines(body, numbers):
+def row_of(body, num):
+    """Index of the body line printed on the same row as a margin number."""
+    hits = [i for i, b in enumerate(body) if b.page == num.page and abs(b.y0 - num.y0) < 4]
+    return hits[0] if len(hits) == 1 else None
+
+
+def heading_score(body, i):
+    """How much line i looks like a printed line that carries no number: a
+    subheading or caption. 0 means it reads as ordinary text."""
+    l = body[i]
+    prev = body[i - 1] if i > 0 else None
+    nxt = body[i + 1] if i + 1 < len(body) else None
+    widths = sorted(b.x1 - b.x0 for b in body)
+    full = widths[len(widths) * 3 // 4] if widths else 1
+    gap_before = prev is None or prev.page != l.page or l.y0 - prev.y0 > 20
+    gap_after = nxt is None or nxt.page != l.page or nxt.y0 - l.y0 > 20
+    score = 0
+    if l.bold:
+        score += 3
+    if l.size and abs(l.size - BODY_SIZE) > 0.6:
+        score += 3
+    if fully_italic(l):
+        score += 1
+    if (l.x1 - l.x0) < 0.6 * full and gap_before and gap_after:
+        score += 2
+    return score
+
+
+def unnumbered_lines(body, numbers):
+    """Indices of body lines that carry no line number, worked out from the
+    printed margin numbers: between two printed numbers k1 and k2 there are
+    exactly k2 - k1 numbered lines, so any extra lines there are unnumbered,
+    and the most heading-like ones are taken. Returns (indices, problems)."""
+    anchors = sorted((row_of(body, n), int(n.text)) for n in numbers if row_of(body, n) is not None)
+    if not anchors:
+        return set(), ["no printed line number lines up with a text line"]
+    skip, problems = set(), []
+    spans = [(-1, 0)] + anchors
+    for (i1, k1), (i2, k2) in zip(spans, spans[1:]):
+        extra = (i2 - i1) - (k2 - k1)
+        if extra < 0:
+            problems.append(f"fewer text lines than numbers between printed {k1 or 'start'} and {k2}")
+            continue
+        if extra:
+            pool = sorted(range(i1 + 1, i2), key=lambda i: -heading_score(body, i))[:extra]
+            if any(heading_score(body, i) == 0 for i in pool):
+                problems.append(f"{extra} unnumbered line(s) between printed {k1 or 'start'} and {k2}, "
+                                f"but none looks like a heading; check the review page")
+            skip.update(pool)
+    # After the last printed number only clear headings go unnumbered.
+    skip.update(i for i in range(anchors[-1][0] + 1, len(body)) if heading_score(body, i) >= 3)
+    return skip, problems
+
+
+def number_lines(body, numbers, anchored=False):
     """Body lines numbered 1, 2, 3..., and where that disagrees with the
-    numbers printed in the margin."""
-    lines, prev = [], None
-    for idx, l in enumerate(body, start=1):
+    numbers printed in the margin. Anchored, lines the printed numbers show
+    to be unnumbered get n = None (and heading = True if set in bold)."""
+    skip, problems = unnumbered_lines(body, numbers) if anchored else (set(), [])
+    lines, prev, n = [], None, 0
+    for idx, l in enumerate(body):
         gap = prev is not None and l.page == prev.page and l.y0 - prev.y0 > 20
+        if idx not in skip:
+            n += 1
         lines.append({
-            "n": idx,
+            "n": None if idx in skip else n,
+            **({"heading": True} if idx in skip and l.bold else {}),
             "text": l.text,
             "indent": l.x0 > 80,              # first line of a prose paragraph
             "gap_before": bool(gap),          # stanza break or section break
@@ -314,10 +384,34 @@ def number_lines(body, numbers):
         if len(same_row) != 1 or same_row[0]["n"] != int(num.text):
             mismatches.append(f"printed {num.text} on page {num.page} y={num.y0:.0f} "
                               f"matches {[x['n'] for x in same_row]}")
-    return lines, mismatches
+    return lines, mismatches + problems
 
 
 # ---------------------------------------------------------------- questions
+
+def merge_bare_numbers(lines):
+    """Join a question number printed as its own piece of text ("17") to the
+    stem beside it on the same row, so it reads "17 The description...".
+    Only bare numbers are joined: choices side by side stay separate."""
+    import copy
+    used, out = set(), []
+    for i, l in enumerate(lines):
+        if i in used:
+            continue
+        if l.text.strip().isdigit():
+            partner = min((j for j, m in enumerate(lines) if j > i and j not in used and m.page == l.page
+                           and abs(m.y0 - l.y0) < 3 and 0 <= m.x0 - l.x1 < 40),
+                          key=lambda j: lines[j].x0, default=None)
+            if partner is not None:
+                m = copy.copy(l)
+                m.text = f"{l.text.strip()}  {lines[partner].text.strip()}"
+                m.x1, m.y1 = lines[partner].x1, max(l.y1, lines[partner].y1)
+                used.add(partner)
+                out.append(m)
+                continue
+        out.append(l)
+    return out
+
 
 def question_blocks(doc, passage, first_no):
     """Split the question area into questions, in reading order.
@@ -327,7 +421,7 @@ def question_blocks(doc, passage, first_no):
     the sequence, rather than fixed x positions, copes with layouts that
     shift between years and with right-aligned two-digit numbers. A page
     whose question area spans the full width is read as one column."""
-    lines = passage["questions_area"]
+    lines = merge_bare_numbers(passage["questions_area"])
     # One column only if nothing on the page starts in the right-hand column
     # (a single wide line, like the directions, doesn't make a page one column).
     pages = {l.page for l in lines}
@@ -473,8 +567,8 @@ def line_refs(stem, stimulus):
 def unit_span(stimulus, unit, k):
     """First and last line of the k-th stanza (gap-separated) or paragraph
     (indent-started) of a passage."""
-    starts = [ln["n"] for ln in stimulus["lines"]
-              if ln["n"] == 1 or (unit == "stanza" and ln["gap_before"]) or (unit == "paragraph" and ln["indent"])]
+    starts = [ln["n"] for ln in stimulus["lines"] if ln["n"] is not None and
+              (ln["n"] == 1 or (unit == "stanza" and ln["gap_before"]) or (unit == "paragraph" and ln["indent"]))]
     if k > len(starts):
         return None
     end = starts[k] - 1 if k < len(starts) else stimulus["line_count"]
@@ -627,7 +721,9 @@ breaks), then each question crop against its parsed stem, key and cited lines.</
                     last = a
             pieces.append(e(text[last:]))
             cls = " ".join(c for c, on in (("gap", ln["gap_before"]), ("indent", ln["indent"]), ("cited", ln["n"] in cited)) if on)
-            num = ln["n"] if ln["n"] % 5 == 0 or ln["n"] in cited else ""
+            num = "" if ln["n"] is None else (ln["n"] if ln["n"] % 5 == 0 or ln["n"] in cited else "")
+            if ln.get("heading"):
+                pieces = ["<b>", *pieces, "</b>"]
             rows.append(f"<div class='ln {cls}'><span>{num}</span><span>{''.join(pieces)}</span></div>")
         notes = "".join(f"<p class=meta><sup>{f['n']}</sup> {e(f['term'])}: {e(f['gloss'])}</p>" for f in s["footnotes"])
         attr = "<br>".join(
