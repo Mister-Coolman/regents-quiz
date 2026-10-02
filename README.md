@@ -1,139 +1,193 @@
 # NY State Regents Prep AI
 
-A web app for practicing NY State Regents exams with real, past exam questions
-and AI-generated explanations. Users can browse by subject/topic, download
-practice sets as PDFs, and work through questions in an interactive quiz mode
-with progressive hints and worked explanations.
+Practice New York State Regents exams using real past questions, interactive
+quizzes, progressive hints, and AI-generated worked explanations. Math practice
+covers **Algebra I, Algebra II, and Geometry**. **ELA Part 1 reading practice** is
+implemented behind a feature flag and is off by default.
 
-Live at **https://nystateregentsprep.netlify.app/**
+[Open the app](https://nystateregentsprep.netlify.app/)
 
 ## Features
 
-- Real Regents exam questions pulled from official exam PDFs, with question
-  images cropped out of the source PDFs
-- AI-generated explanations (via Fireworks AI, Qwen3.7 Plus) for each
-  question, broken into "What's being asked," "Approach," "Work," and "Answer"
-- Interactive quiz mode:
-  - Progressive hints, unlocked one at a time from the explanation, so a
-    student can get unstuck without seeing the full solution
-  - Answer checking with an explanation panel that opens automatically on a
-    miss and stays collapsed on a correct answer
-  - Progress (question index, results, hints used) saved to the browser's
-    localStorage, so closing and reopening a quiz resumes where you left off
-  - A review screen at the end listing every missed question with its
-    explanation
-- Math rendered with KaTeX (via `react-markdown` + `remark-math` +
-  `rehype-katex`), so explanations with equations render properly
-- Chat history: past chats are saved in the browser and listed under "Chats",
-  grouped by day, and can be reopened or deleted. Each practice set carries a
-  signed token (`backend/set_tokens.py`), so a reopened chat can still check
-  answers after a deploy has wiped the server's session tables
-- PDF export of a math practice set
-- English Language Arts (ELA) Part 1 reading practice, behind the
-  `ELA_ENABLED` flag: whole passage sets (a passage and every question about
-  it) in a side-by-side reader with printed line numbers and the cited lines
-  highlighted. No PDF for ELA. See RELEASE.md for adding exams and the kill
-  switches.
-- Natural-language query parsing (e.g. "10 Algebra I MCQs on Systems of
-  Equations") backed by Fireworks AI's DeepSeek V4.1 Flash, used to build a practice set from a
-  free-text request
+- Ask for practice questions, list topics, or count matching questions in plain
+  English. Follow-ups can reuse the previous subject, topic, and question type.
+  Math sets prefer questions not yet served in the current session.
+- View question images cropped from official exams; download math practice sets
+  as PDFs generated on demand.
+- Check multiple-choice answers on the server. Answer keys, full explanations,
+  and rubrics are omitted from the initial question payload; `/api/check`
+  releases feedback for the submitted question.
+- Written-response questions are available for practice but **are not
+  automatically graded** and do not count toward the score or missed questions.
+- Where an explanation is available, reveal hints in order: “What's being
+  asked,” “Approach,” then up to two work steps. These are excerpts from the
+  explanation, not separately generated hints.
+- Open a full explanation after answering; it opens automatically on a miss.
+  Explanations follow four sections: “What's being asked,” “Approach,” “Work,”
+  and “Answer,” with Markdown and KaTeX math rendering. They are AI-generated
+  and can contain errors; some questions have no explanation.
+- Resume quiz progress in the same browser, review missed answers, and see the
+  total hints used and a score dial at the end.
+- Reopen or delete saved chats, grouped by day. Chats and quiz progress use
+  browser localStorage, not an account or cross-device sync.
+- When enabled, ELA serves complete passage sets in a side-by-side reader, with
+  printed line numbers, cited-line highlighting, footnotes, and elapsed time.
+  It covers Part 1 multiple-choice reading, not essay or written-response
+  scoring. ELA sets cannot be exported as PDFs.
 
 ## Architecture
 
-- **Backend** — Flask + SQLite, deployed on Fly.io. Serves questions,
-  explanations, and question images from `regentsqs.db`, and proxies
-  natural-language quiz requests to Fireworks AI for parsing. Answer keys and
-  explanations never ship with the questions: the quiz sends each attempt to
-  `/api/check`, which releases that one question's answer. The database
-  is not committed to git — it ships as part of the Docker image on
-  `fly deploy`.
-- **Frontend** — React + Vite, deployed on Netlify with auto-deploy on push
-  to `main`.
-- **Data pipeline** (`scripts/`) — offline, run manually, not part of the
-  deployed app:
-  - Downloads official exam PDFs and rating guides
-  - Crops question images out of the source PDFs (PyMuPDF-based exact-match
-    recropping, plus a `recrop_broken.py` pass to fix images cut off in the
-    initial extraction)
-  - Generates explanations for each question via Fireworks AI and writes
-    them back into the database (`fireworks_explanations.py`,
-    `generate_explanations.py`)
-  - `extract_topics.py`, `run_pipeline.py`, and `image2latex_test.py` are an
-    earlier, YOLO/OCR-based extraction pipeline (`ultralytics`, `surya`,
-    `pdfplumber`, `pandas`) that predates the current PyMuPDF-based
-    recropping approach. They're left in the repo for reference but are not
-    part of the maintained pipeline and their dependencies are not included
-    in the install command below.
+- **Backend:** Flask + SQLite, deployed on Fly.io. Question metadata,
+  explanations, and ELA passage data live in `backend/regentsqs.db`; question
+  images live under `backend/static/images/`.
+- **AI:** Fireworks `accounts/fireworks/models/deepseek-v4p1-flash` handles live
+  query parsing and the current offline math and ELA explanation generators.
+  Explanations are generated ahead of time and stored in the database.
+- **Frontend:** React + Vite, deployed on Netlify. It requests available feature
+  flags from `/api/features`, so ELA can be enabled without a frontend rebuild.
+- **Saved sets:** signed tokens let reopened chats check answers after server
+  session tables are cleared, provided the signing key remains stable and the
+  questions remain available. ELA availability and withdrawal rules still apply.
+- **Deployment data:** the SQLite bank and images ship inside the backend image;
+  the database is not committed to Git. Server session history is not durable
+  across releases. Browser-saved chats and quiz progress are separate.
 
-## Getting started
+## Local setup
+
+Use Python 3.11 (the backend Docker runtime) and a Node.js version supported by
+Vite 7, such as Node 22.12 or newer in the Node 22 series, plus npm.
 
 ### Backend
 
+A fresh clone does not contain the question database. Restore an existing bank
+as `backend/regentsqs.db` and ensure its referenced images are present.
+Migrations update the schema; they do not populate the question bank.
+
+From the repository root:
+
 ```bash
 cd backend
-pip install -r requirements.txt
-# create a .env with FIREWORKS_API_KEY and any other secrets llm_client.py expects
-python migrate.py      # bring regentsqs.db to the schema the code expects
+python3 -m venv venv
+source venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Create `backend/.env` (Git-ignored):
+
+```dotenv
+FIREWORKS_API_KEY=your_api_key
+SET_TOKEN_SECRET=your_stable_random_secret
+ELA_ENABLED=false
+```
+
+Keep `SET_TOKEN_SECRET` stable to preserve saved-set tokens. If omitted, it is
+derived from `FIREWORKS_API_KEY`; changing that key then invalidates old tokens.
+Without either key, tokens last only for the current backend process.
+
+From `backend/`, with the virtual environment active:
+
+```bash
+python migrate.py
 python app.py
 ```
 
-The app refuses to start on a database older than `db.SCHEMA_VERSION`.
-Schema changes go in a new numbered file in `backend/migrations/` and are
-applied offline with `python migrate.py`, never at app start.
-
-Tests (they need `backend/regentsqs.db`, which isn't in git, and never call
-the LLM):
-
-```bash
-pip install -r requirements-dev.txt
-python -m pytest
-```
-
-`tests/golden_math.json` fingerprints what the API sends and how it grades
-every question. After an intentional change, check it and run
-`python -m tests.golden --update`.
+The backend listens on `http://localhost:8080`. It checks the schema at startup
+and refuses an older database. Add schema changes as numbered files in
+`backend/migrations/`, then apply them offline with `python migrate.py`.
 
 ### Frontend
 
+In a second terminal, from the repository root:
+
 ```bash
 cd frontend
-npm install
-# set VITE_API_BASE_URL in frontend/.env to point at your backend
-npm run dev
+npm ci
 ```
 
-Frontend dependencies live in `frontend/package.json`. There is deliberately no
-`requirements.txt` in `frontend/`: Netlify would treat the folder as a Python
-project and try to `pip install` it.
+Create `frontend/.env.local` (Git-ignored) with this local override:
 
-### Data pipeline scripts
+```dotenv
+VITE_API_BASE_URL=
+```
 
-The scripts in `scripts/` that are actually run day-to-day
-(`fireworks_explanations.py`, `recrop_broken.py`, `download_exams.py`,
-`download_rating_guides.py`, `backfill_crq_rubrics.py`,
-`generate_explanations.py`, `vlm_utils.py`) need:
+Then run `npm run dev` and open `http://localhost:5173`. The blank value makes
+Vite proxy `/api` and `/images` to the local backend on port 8080. The tracked
+`frontend/.env` points to production; keep local overrides in `.env.local`.
+Restart Vite after changing environment files.
+
+Frontend dependencies are managed by `package.json` and `package-lock.json`,
+not a Python `requirements.txt`. Build with `npm run build`.
+
+## Verification
+
+From `backend/`, with the virtual environment active:
 
 ```bash
-pip install requests python-dotenv Pillow PyMuPDF numpy
+python -m pip install -r requirements-dev.txt
+python -m pytest
 ```
 
-## Deployment
+Backend tests stub the LLM and use temporary databases. Tests requiring the real
+question bank use a copy and skip when it is absent; synthetic-bank tests can
+still run. `backend/tests/golden_math.json` fingerprints math payloads and
+answer checking. After reviewing an intentional change, regenerate it from
+`backend/` with `python -m tests.golden --update`.
 
-### Frontend (Vite + React)
+From the repository root, `scripts/smoke.sh [base-url]` checks the deployed API,
+answer checking, an image, and a PDF; it also checks ELA when enabled. It
+**makes real Fireworks calls** and defaults to the production backend.
 
-Hosted on **Netlify**, auto-deployed from `main`.
-https://nystateregentsprep.netlify.app/
+## Data preparation
 
-### Backend (Flask + SQLite)
-
-Hosted on **Fly.io** (`fly.toml`, app `backend-winter-smoke-307`).
-Deploy with the release script, which checks, backs up, deploys and smoke
-tests (see [RELEASE.md](RELEASE.md)):
+Run scripts from the repository root with the backend virtual environment
+active. Current extraction, recropping, explanation, and rubric tools need:
 
 ```bash
-scripts/release.sh
+python -m pip install requests python-dotenv Pillow PyMuPDF numpy
 ```
 
-The SQLite database ships inside the built image — pushing to git alone does
-not update the deployed data; you need to `fly deploy` after any local
-database change.
+- `download_exams.py` and `download_rating_guides.py` download source material.
+- `recrop_broken.py` repairs existing question crops by matching them to the
+  original PDF and expanding their boundaries. It is not a replacement for
+  initial question extraction.
+- `fireworks_explanations.py` generates and validates math explanations using
+  Fireworks, with dry-run reports for review.
+- `ela_extract.py`, `ela_import.py`, and `ela_stimuli.py` extract, import, verify,
+  and withdraw ELA passages. Only verified, available passages may be served.
+- `ela_explanations.py` generates ELA explanations with format, answer-key,
+  quotation-length, and cited-line checks. Flagged items need human review.
+- `backfill_crq_rubrics.py` prepares rubric data using a local Ollama model;
+  it does not implement student-response grading.
+- `generate_explanations.py` is the older local Ollama explanation generator
+  (`qwen2.5vl:7b`), not the current Fireworks generator.
+- The older YOLO/OCR tools (`run_pipeline.py`, `extract_topics.py`, and
+  `image2latex_test.py`) need additional ML/OCR dependencies not installed above.
+
+See [RELEASE.md](RELEASE.md) for the ELA import/review workflow and switches.
+Keep passage text and passage-containing review artifacts out of the public
+repository; `scripts/check_no_passages.sh` checks tracked files before release.
+
+## Deployment and operations
+
+Release the backend first with `scripts/release.sh` from the repository root,
+then push or merge frontend changes to `main` for Netlify. The release script
+uses `backend/venv/bin/python` and requires the Fly CLI, authentication, Git,
+and the SQLite CLI.
+
+The script checks tracked changes and schema compatibility, backs up the bank,
+**clears local session tables**, runs data checks and tests, records the previous
+image, deploys, and runs live smoke checks. Pushing to Git alone does not update
+the deployed database. Follow [RELEASE.md](RELEASE.md) for release order,
+rollback commands, and backup settings; off-laptop backup mirroring is currently
+paused.
+
+The backend Fly app is `backend-winter-smoke-307`, configured in
+`backend/fly.toml`. `/healthz` checks liveness; `/readyz` reports schema, question
+counts, image availability, API-key presence, and ELA status.
+
+Environment settings include `FIREWORKS_API_KEY`, `SET_TOKEN_SECRET`,
+`ELA_ENABLED` (default off), `WITHDRAWN_STIMULI`, and `LLM_DAILY_CAP` (default
+2,000 calls/day). Per-IP rate limits and the daily budget are held in memory
+and reset on restart. The deployment uses one worker and one always-on machine;
+move counters to shared storage before scaling. See [RELEASE.md](RELEASE.md)
+for production secret configuration and ELA launch checks.
