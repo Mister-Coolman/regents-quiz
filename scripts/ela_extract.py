@@ -362,19 +362,25 @@ def question_blocks(doc, passage, first_no):
     blocks = []
     for k, i in enumerate(starts):
         end = starts[k + 1] if k + 1 < len(starts) else len(ordered)
-        own = ordered[i:end]
         head = ordered[i]
+        own = ordered[i:end]
         segment = [l for l in own if (l.page, col(l)) == (head.page, col(head))]
-        blocks.append({
+        block = {
             "no": int(NUM_RE.match(head.text).group(1)),
             "page": head.page,
             "col": "full" if head.page in full_width else col(head),
-            "lines": own,
-            # Lines that ran on into the next column or page: the crop shows
-            # only the first part, so the gate stops on these.
-            "spills": len(segment) != len(own),
+            "lines": segment,
             "crop_lines": segment,
-        })
+            "spills": False,
+        }
+        # A question normally ends with its column. Whatever follows in the
+        # next column before the next question (a caption, a photo credit,
+        # "Go on") isn't part of it. Only when its own column lacks one of
+        # the four choices does the question really continue there; then
+        # the crop would be incomplete, and the gate stops on it.
+        if not all(parse_question(block)[1]) and len(segment) != len(own):
+            block["lines"], block["spills"] = own, True
+        blocks.append(block)
     return blocks
 
 
