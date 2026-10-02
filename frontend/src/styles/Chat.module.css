@@ -52,8 +52,17 @@
   color: var(--link);
   cursor: pointer;
 }
-.navBtn:hover {
+.navBtn:hover:not(:disabled) {
   text-decoration: underline;
+}
+.navBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Holds the right-hand slot when "New chat" isn't shown, so the wordmark
+   stays centred. */
+.navSpacer {
+  width: 64px;
 }
 
 /* ---- Main column ---- */

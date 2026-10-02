@@ -57,6 +57,7 @@ For the frontend, use "Publish deploy" on the previous build in Netlify.
 | `FIREWORKS_API_KEY` | `fly secrets set` | none | query parsing |
 | `ELA_ENABLED` | `fly secrets set` | off | serve ELA passage sets and show ELA on the welcome screen |
 | `WITHDRAWN_STIMULI` | `fly secrets set` | none | comma-separated stimulus ids to stop serving at once (query, history and check) |
+| `SET_TOKEN_SECRET` | `fly secrets set` | derived from `FIREWORKS_API_KEY` | signs practice sets so chats reopened from history can check answers; changing it (or the Fireworks key, while this is unset) makes older saved chats unable to check unanswered questions |
 | `LLM_DAILY_CAP` | `fly secrets set` or `[env]` in fly.toml | 2000 | Fireworks calls per day across all visitors; past it, students see "Practice sets are paused for today because of heavy use. Try again tomorrow." |
 
 Rate limits and the daily cap are counted in memory, which is exact for the

@@ -4,6 +4,8 @@ import QuizPlayer                       from './QuizPlayer';
 import MessageBubble                    from './MessageBubble';
 import TypingIndicator                  from './TypingIndicator';
 import SubjectMark, { ELA, MATH_SUBJECTS } from './SubjectMark';
+import ChatHistory                      from './ChatHistory';
+import { deleteChat, listChats, loadChat, restoreChat, saveChat } from './chatStore';
 import styles                           from '../styles/Chat.module.css';
 
 const apiBase = import.meta.env.VITE_API_BASE_URL || '';
@@ -56,27 +58,48 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading, activeQuizKey]);
 
-  useEffect(() => {
-    if (!sessionId) return;
-    // Clearing history swaps in a new session id while the previous session's
-    // request may still be in flight. Without this guard that stale response
-    // lands last and restores the messages the student just cleared.
-    let cancelled = false;
+  // Past chats live in this browser (chatStore). `loadedFor` marks which
+  // chat the messages on screen belong to, so nothing is saved under the
+  // wrong chat while switching.
+  const [chats, setChats] = useState(listChats);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const loadedFor = useRef(null);
 
+  useEffect(() => {
+    if (!sessionId || loadedFor.current === sessionId) return;   // a brand-new chat
+    const stored = loadChat(sessionId);
+    if (stored) {
+      loadedFor.current = sessionId;
+      setMessages(withKeys(stored));
+      return;
+    }
+    // Not saved here yet: a chat from before history existed, still on the
+    // server if no deploy has wiped it. The switch guard stops a late reply
+    // from landing in a chat opened since.
+    let cancelled = false;
+    loadedFor.current = null;
     fetch(`${apiBase}/api/history/${sessionId}`)
       .then(res => (res.ok ? res.json() : []))
       .then(data => {
         if (cancelled) return;
+        loadedFor.current = sessionId;
         setMessages(Array.isArray(data) && data.length > 0 ? withKeys(data) : greeting());
       })
       .catch(err => {
         if (cancelled) return;
         console.error('Failed to load history:', err);
+        loadedFor.current = sessionId;
         setMessages(greeting());
       });
 
     return () => { cancelled = true; };
   }, [sessionId]);
+
+  useEffect(() => {
+    if (!sessionId || loadedFor.current !== sessionId) return;
+    if (messages.some(m => m.typing)) return;     // save once the reply is in
+    setChats(saveChat(sessionId, messages));
+  }, [messages, sessionId]);
   const sendMessage = async (override = null) => {
     // Guard here as well as on the buttons: pressing Enter would otherwise
     // fire concurrent requests that race each other into the message list.
@@ -123,6 +146,7 @@ export default function Chat() {
 
       replaceTyping({
         sender: 'bot', text: data.response, questions: data.questions || [], stimuli: data.stimuli || [],
+        set_token: data.set_token,
       });
     } catch (err) {
       console.error('Query failed:', err);
@@ -136,47 +160,52 @@ export default function Chat() {
       setLoading(false);
     }
   };
-  // "New chat" can be undone for a few seconds, so the old session is only
-  // ended on the backend once that window has passed.
-  const UNDO_MS = 8000;
-  const [cleared, setCleared] = useState(null);   // { sessionId, messages, timer }
-
-  const endSession = (sid) => {
-    fetch(`${apiBase}/api/end_session`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sid })
-    }).catch(err => console.error('Failed to end session:', err));
-  };
-
-  const handleClearHistory = () => {
-    if (cleared) {
-      clearTimeout(cleared.timer);
-      endSession(cleared.sessionId);
-    }
-    const oldSid = sessionId;
-    const timer = setTimeout(() => {
-      endSession(oldSid);
-      setCleared(null);
-    }, UNDO_MS);
-    setCleared({ sessionId: oldSid, messages, timer });
-
-    setMessages(greeting());
+  const switchTo = (sid) => {
+    localStorage.setItem('regentsSessionId', sid);
+    loadedFor.current = null;
     setActiveQuizKey(null);
-    const newSid = uuidv4();
-    localStorage.setItem('regentsSessionId', newSid);
-    setSessionId(newSid);
+    setHistoryOpen(false);
+    setSessionId(sid);
   };
 
-  const handleUndoClear = () => {
-    if (!cleared) return;
-    clearTimeout(cleared.timer);
-    localStorage.setItem('regentsSessionId', cleared.sessionId);
-    setSessionId(cleared.sessionId);
-    setMessages(cleared.messages);
-    setCleared(null);
+  // A new chat leaves the old one in the list; nothing is lost, so there's
+  // nothing to undo. Sending is locked while a reply is pending, so a reply
+  // can't land in the wrong chat.
+  const startNewChat = () => {
+    if (loading) return;
+    const sid = uuidv4();
+    setMessages(greeting());
+    switchTo(sid);
+    loadedFor.current = sid;    // nothing to load for a chat that didn't exist
   };
-  
+
+  const openChat = (sid) => {
+    if (loading) return;
+    if (sid === sessionId) { setHistoryOpen(false); return; }
+    switchTo(sid);
+  };
+
+  // Deleting can be undone for a few seconds.
+  const UNDO_MS = 8000;
+  const [deleted, setDeleted] = useState(null);   // { entry, messages, timer }
+
+  const handleDelete = (sid) => {
+    if (deleted) clearTimeout(deleted.timer);
+    const entry = chats.find(c => c.id === sid);
+    const stored = loadChat(sid) || [];
+    setChats(deleteChat(sid));
+    const timer = setTimeout(() => setDeleted(null), UNDO_MS);
+    setDeleted({ entry, messages: stored, timer });
+    if (sid === sessionId) startNewChat();
+  };
+
+  const handleUndoDelete = () => {
+    if (!deleted) return;
+    clearTimeout(deleted.timer);
+    if (deleted.entry) setChats(restoreChat(deleted.entry, deleted.messages));
+    setDeleted(null);
+  };
+
   // Only the greeting so far: show the welcome screen instead of a lone bubble.
   const isEmpty = messages.length === 1 && messages[0].key === 'greeting';
 
@@ -184,16 +213,25 @@ export default function Chat() {
     <div className={styles.app}>
       <header className={styles.nav}>
         <div className={styles.navInner}>
+          <button
+            className={styles.navBtn}
+            onClick={() => setHistoryOpen(true)}
+            aria-haspopup="dialog"
+          >
+            Chats
+          </button>
           <span className={styles.wordmark}>
             <span className={styles.marks} aria-hidden="true">
               {subjects.map(s => <SubjectMark key={s.key} subject={s} size={11} />)}
             </span>
             Regents Prep
           </span>
-          {!isEmpty && !activeQuiz && (
-            <button className={styles.navBtn} onClick={handleClearHistory}>
+          {!isEmpty && !activeQuiz ? (
+            <button className={styles.navBtn} onClick={startNewChat} disabled={loading}>
               New chat
             </button>
+          ) : (
+            <span className={styles.navSpacer} aria-hidden="true" />
           )}
         </div>
       </header>
@@ -203,6 +241,7 @@ export default function Chat() {
           <QuizPlayer
             questions={activeQuiz.questions}
             stimuli={activeQuiz.stimuli || []}
+            setToken={activeQuiz.set_token}
             sessionId={sessionId}
             onFinish={() => setActiveQuizKey(null)}
           />
@@ -285,10 +324,10 @@ export default function Chat() {
           <footer className={styles.composerDock}>
             {/* The live region stays mounted so screen readers catch the change. */}
             <div role="status">
-              {cleared && (
+              {deleted && (
                 <div className={styles.undoBar}>
-                  <span>Chat cleared.</span>
-                  <button className={styles.textBtn} onClick={handleUndoClear}>Undo</button>
+                  <span>Chat deleted.</span>
+                  <button className={styles.textBtn} onClick={handleUndoDelete}>Undo</button>
                 </div>
               )}
             </div>
@@ -322,6 +361,16 @@ export default function Chat() {
           </footer>
         </>
       )}
+      <ChatHistory
+        open={historyOpen}
+        chats={chats}
+        currentId={sessionId}
+        busy={loading}
+        onOpen={openChat}
+        onDelete={handleDelete}
+        onNewChat={startNewChat}
+        onClose={() => setHistoryOpen(false)}
+      />
     </div>
   );
 }
