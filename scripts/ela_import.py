@@ -23,7 +23,9 @@ bundle.json, as this script expects it:
     "stimuli": [
       {"label": "A", "kind": "literary" | "poem" | "informational",
        "title": "...", "author": "...", "intro": "..." | null,
-       "lines": [{"n": 1, "text": "...", "stanza_break": true}, ...],
+       "lines": [{"n": 1, "text": "...", "stanza_break": true,
+                  "notes": [{"n": 1, "at": 14}]}, ...],
+       "title_notes": [...], "intro_notes": [...]   (footnote markers, optional)
        "footnotes": ["..."], "credit": "..."}
     ],
     "questions": [
@@ -37,6 +39,7 @@ bundle.json, as this script expects it:
 "stanza_break": true marks a blank line before that line; "indent": true an
 indented printed line. Bundles written by ela_extract.py are translated into
 this shape first (from_extractor).
+"heading": true marks an unnumbered subheading (set in bold).
 "n" is the printed line number for every line of a numbered passage (null
 for unnumbered lines such as a title inside the text). "line_refs" is
 optional: when present it is used as given (a difference from what
@@ -125,6 +128,10 @@ def from_extractor(raw):
                 out["stanza_break"] = True
             if line.get("indent"):
                 out["indent"] = True
+            if line.get("heading"):
+                out["heading"] = True
+            if line.get("notes"):
+                out["notes"] = [{"n": n["n"], "at": n["at"]} for n in line["notes"]]
             lines.append(out)
         stimuli.append({
             "label": s["label"],
@@ -132,6 +139,8 @@ def from_extractor(raw):
             "title": s.get("title"),
             "author": s.get("author"),
             "intro": s.get("intro"),
+            "title_notes": s.get("title_notes") or [],
+            "intro_notes": s.get("intro_notes") or [],
             "lines": lines,
             "footnotes": [f"{f.get('n', '')} {f.get('term', '')}: {f.get('gloss', '')}".strip()
                           for f in s.get("footnotes") or []],
@@ -245,8 +254,9 @@ def check_bundle(bundle, bundle_dir, allow_partial=False, warnings=None):
                 errors.append(f"{tag}: cites line(s) {missing} that passage {label} doesn't have")
 
     for where, text in _texts(bundle):
-        if "$" in text or "||" in text:
-            errors.append(f"{where}: contains '$' or '||'")
+        # Passages and stems render as plain text, so a price's '$' is fine.
+        if "||" in text:
+            errors.append(f"{where}: contains '||'")
     return errors
 
 
@@ -256,6 +266,10 @@ def _line(line):
         out["stanza_break"] = True
     if line.get("indent"):
         out["indent"] = True
+    if line.get("heading"):
+        out["heading"] = True
+    if line.get("notes"):
+        out["notes"] = line["notes"]
     return out
 
 
@@ -268,7 +282,15 @@ def _stimulus_fields(s):
         "lines": json.dumps([_line(line) for line in s["lines"]], ensure_ascii=False),
         "footnotes": json.dumps(s.get("footnotes") or [], ensure_ascii=False),
         "credit": s.get("credit"),
+        "marks": json.dumps({"title": s.get("title_notes") or [], "intro": s.get("intro_notes") or []}),
     }
+
+
+def _text_only(fields):
+    """The fields a person verified, without footnote marker positions: adding
+    or moving a marker doesn't undo a line-by-line check of the text."""
+    lines = [{k: v for k, v in line.items() if k != "notes"} for line in json.loads(fields["lines"])]
+    return {**{k: v for k, v in fields.items() if k not in ("lines", "marks")}, "lines": lines}
 
 
 def import_bundle(conn, bundle, bundle_dir, static_dir=STATIC):
@@ -296,12 +318,16 @@ def import_bundle(conn, bundle, bundle_dir, static_dir=STATIC):
             summary["stimuli_new"] += 1
         else:
             stim_ids[s["label"]] = row[0]
-            if tuple(row[1:]) != tuple(fields.values()):
-                # The text a person checked is no longer the text stored.
-                cur.execute(f"UPDATE stimuli SET {', '.join(f'{k} = ?' for k in fields)}, "
-                            f"verified_by = NULL, verified_at = NULL WHERE id = ?",
+            stored = dict(zip(fields, row[1:]))
+            stored["marks"] = stored["marks"] or json.dumps({"title": [], "intro": []})
+            if stored != fields:
+                text_changed = _text_only(stored) != _text_only(fields)
+                # Only a change to the text a person checked undoes the check.
+                reset = ", verified_by = NULL, verified_at = NULL" if text_changed else ""
+                cur.execute(f"UPDATE stimuli SET {', '.join(f'{k} = ?' for k in fields)}{reset} WHERE id = ?",
                             (*fields.values(), row[0]))
-                summary["stimuli_changed"] += 1
+                summary["stimuli_changed" if text_changed else "stimuli_marks_updated"] = \
+                    summary.get("stimuli_changed" if text_changed else "stimuli_marks_updated", 0) + 1
 
     rel_dir = os.path.join("images", "ela", code)
     os.makedirs(os.path.join(static_dir, rel_dir), exist_ok=True)
@@ -362,7 +388,10 @@ def main():
         print(f"[extract warning] {w}")
     bundle = from_extractor(raw)
     for fig in bundle.get("figures") or []:
-        print(f"[import] not imported: figure in passage {fig.get('passage')} on page {fig.get('page')}")
+        # ela_extract.py counts pages from 0; people count from 1.
+        page = fig.get("page")
+        print(f"[import] not imported: figure in passage {fig.get('passage')} on page "
+              f"{page + 1 if isinstance(page, int) else page}")
     warnings = []
     errors = check_bundle(bundle, bundle_dir, args.allow_partial, warnings)
     for w in warnings:

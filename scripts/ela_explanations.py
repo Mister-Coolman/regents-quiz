@@ -11,6 +11,7 @@ An explanation is stored only if it passes every validator:
   - its Answer names the keyed choice, and no other
   - no '$' (the quiz renders explanations as Markdown with math)
   - at most 200 words, and at most 15 words quoted from the passage
+    (quotes of the question's choices don't count)
   - every line it cites ("line 12", "lines 3-5") exists in the passage
 A question that still fails after retries ships without an explanation.
 
@@ -71,7 +72,7 @@ mention another choice, say briefly why it doesn't fit.
 **Answer**
 One sentence that names choice {key} and why it is correct.
 
-Rules: no LaTeX and no dollar signs. Cite only line numbers that appear in the passage. Plain, \
+Rules: no LaTeX. Write any amount of money with a backslash before the dollar sign, like \\$5. Cite only line numbers that appear in the passage. Plain, \
 calm language; no exclamation marks. Keep the whole response under {max_words} words.
 
 PASSAGE {label}{title}
@@ -99,7 +100,18 @@ def passage_text(lines):
     return "\n".join(out)
 
 
-def problems(content, key, line_numbers):
+def _norm(text):
+    text = text.replace("’", "'").replace("‘", "'").replace("“", '"').replace("”", '"')
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def passage_words(lines):
+    """The passage as one normalized string, for telling passage quotes from
+    quotes of the question's own choices."""
+    return _norm(" ".join(line["text"] for line in lines))
+
+
+def problems(content, key, line_numbers, passage=None):
     """Why this explanation can't ship; empty if it can."""
     found = []
     positions = [content.find(h) for h in REQUIRED_HEADERS]
@@ -113,12 +125,18 @@ def problems(content, key, line_numbers):
     # require the Answer to name the key and no other choice.
     if contradicts_key(content, "MCQ", key) or named != {int(key)}:
         found.append("Answer doesn't name the keyed choice alone")
-    if "$" in content:
-        found.append("contains '$'")
+    if re.search(r"(?<!\\)\$", content):
+        found.append("contains an unescaped '$' (prices must be written \\$5)")
     words = len(re.findall(r"\b\w+\b", content))
     if words > MAX_WORDS:
         found.append(f"{words} words (max {MAX_WORDS})")
-    quoted = sum(len(q.split()) for q in QUOTE_RE.findall(content))
+    # Only words quoted from the passage count: quoting a choice ("the
+    # brain's ability to adapt") copies nothing from the passage. Without
+    # the passage text, every quote counts.
+    quotes = QUOTE_RE.findall(content)
+    if passage is not None:
+        quotes = [q for q in quotes if _norm(q).strip(" .,;:!?'\"") and _norm(q).strip(" .,;:!?'\"") in passage]
+    quoted = sum(len(q.split()) for q in quotes)
     if quoted > MAX_QUOTED_WORDS:
         found.append(f"{quoted} quoted words (max {MAX_QUOTED_WORDS})")
     for match in CITED_RE.finditer(content):
@@ -158,7 +176,7 @@ def explain(row, stimulus, usage):
     last = []
     for _ in range(MAX_ATTEMPTS):
         content = call(prompt, usage)
-        last = problems(content, row["correct_answer"], numbers)
+        last = problems(content, row["correct_answer"], numbers, passage_words(lines))
         if not last:
             return content, []
     return "", last
@@ -218,8 +236,10 @@ def apply_saved(db_path, results_path):
         row = conn.execute("""SELECT q.correct_answer, s.lines FROM questions q
                               JOIN question_stimuli qs ON qs.question_id = q.id
                               JOIN stimuli s ON s.id = qs.stimulus_id WHERE q.id = ?""", (r["id"],)).fetchone()
-        numbers = {line["n"] for line in json.loads(row["lines"]) if line.get("n") is not None} if row else set()
-        why = ["question not found"] if not row else problems(r["content"], row["correct_answer"], numbers)
+        lines = json.loads(row["lines"]) if row else []
+        numbers = {line["n"] for line in lines if line.get("n") is not None}
+        why = ["question not found"] if not row else problems(r["content"], row["correct_answer"], numbers,
+                                                              passage_words(lines))
         if why:
             print(f"[apply] id {r['id']} q{r['no']}: not saved, {'; '.join(why)}")
             skipped += 1

@@ -9,6 +9,7 @@ Exits non-zero if anything that would break the live app is wrong. Warnings
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from collections import Counter
@@ -43,8 +44,8 @@ def check_ela(conn, rows, errors, warnings):
         if ns != sorted(set(ns)):
             errors.append(f"{tag}: line numbers aren't increasing")
         texts = [line.get("text", "") for line in lines] + footnotes + [s[k] or "" for k in ("title", "author", "intro", "credit")]
-        if any("$" in t or "||" in t for t in texts):
-            errors.append(f"{tag}: text contains '$' or '||'")
+        if any("||" in t for t in texts):
+            errors.append(f"{tag}: text contains '||'")
         if s["verified_at"] is None and s["rights_status"] != "withdrawn":
             warnings.append(f"{tag}: not verified, so not served")
         stimuli[s["id"]] = set(ns)
@@ -74,8 +75,12 @@ def check_ela(conn, rows, errors, warnings):
                 errors.append(f"{tag}: needs 4 choices")
         except ValueError:
             errors.append(f"{tag}: choices aren't valid JSON")
-        if any("$" in (q.get(k) or "") or "||" in (q.get(k) or "") for k in ("question_text", "choices", "explanation")):
-            errors.append(f"{tag}: text contains '$' or '||'")
+        if any("||" in (q.get(k) or "") for k in ("question_text", "choices", "explanation")):
+            errors.append(f"{tag}: text contains '||'")
+        # Explanations render as Markdown with math: a bare '$' would start a
+        # formula. Prices must be written \$5.
+        if re.search(r"(?<!\\)\$", q.get("explanation") or ""):
+            errors.append(f"{tag}: explanation has an unescaped '$'")
 
 
 def main():

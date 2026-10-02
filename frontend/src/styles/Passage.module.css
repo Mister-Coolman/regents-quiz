@@ -129,6 +129,22 @@
   margin-left: 1.5em;
 }
 
+/* A subheading inside a passage: printed in bold, with no line number. */
+.line[data-heading="true"] {
+  margin-top: 0.8em;
+  font-weight: 600;
+}
+
+/* A footnote marker, as printed. line-height 0 keeps it from opening up
+   the line it sits in. */
+.mark {
+  font-size: 0.68em;
+  line-height: 0;
+  vertical-align: super;
+  color: var(--ink-2);
+  margin-left: 1px;
+}
+
 /* ---- Cited lines: band + ink bracket + label, never colour alone ---- */
 .cited {
   margin: 12px 0 12px -10px;
@@ -177,9 +193,13 @@
 }
 
 /* ---- Footnotes and credit, as printed ---- */
+.footnotes .mark {
+  margin: 0 3px 0 0;
+}
 .footnotes {
+  list-style: none;
   margin: 24px 0 0;
-  padding: 16px 0 0 1.4em;
+  padding: 16px 0 0;
   border-top: 1px solid var(--hairline);
   font-size: 14px;
   line-height: 1.5;
