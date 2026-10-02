@@ -67,6 +67,17 @@ SUBJECT_TOPICS = {
 }
 
 
+# ELA passage types, as Part 1 of the exam groups them. The names are the
+# `questions.topic` values scripts/ela_import.py writes; the values are
+# `stimuli.kind`. A topic here filters whole passage sets, never questions.
+ELA_TOPICS = {
+    "Literary text": "literary",
+    "Poetry": "poem",
+    "Informational text": "informational",
+}
+SUBJECT_TOPICS["ELA"] = list(ELA_TOPICS)
+
+
 def build_topic_whitelist_markdown() -> str:
     lines = []
     for subject, topics in SUBJECT_TOPICS.items():
@@ -75,7 +86,7 @@ def build_topic_whitelist_markdown() -> str:
     return "\n".join(lines)
 
 
-VALID_SUBJECTS = set(SUBJECT_TOPICS.keys()) | {"ELA"}
+VALID_SUBJECTS = set(SUBJECT_TOPICS.keys())
 VALID_TYPES = {"MCQ", "CRQ", "Essay"}
 ALL_TOPICS = {t for topics in SUBJECT_TOPICS.values() for t in topics}
 

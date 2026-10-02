@@ -20,6 +20,7 @@ import db
 from answers import check_answer, public_question
 from llm_client import clean_topic, parse_query_with_ollama, take_llm_call
 from pdf_utils import generate_pdf, pdf_filename
+from topics import ELA_TOPICS
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
 
@@ -135,7 +136,8 @@ def features():
 def help_response():
     if config.ELA_ENABLED:
         subjects = f"Algebra I, Geometry, Algebra II and {ELA_LABEL}"
-        ela_item = "<li><b>Read a passage</b>, like “Give me an ELA passage”</li>"
+        ela_item = ("<li><b>Read a passage</b>, like “Give me an ELA passage”, “Give me a poem” "
+                    "or “Give me an informational passage”</li>")
         ela_note = (" English Language Arts comes as a whole passage set: the passage and every "
                     "question about it, as on Part 1 of the exam. Those sets have no PDF.")
     else:
@@ -156,20 +158,32 @@ def help_response():
     return jsonify({"response": help_text})
 
 
-def ela_response(sess_id, user_query, intent, qtype, limit, reply):
-    """Every ELA request. ELA is served only as whole passage sets, with no
-    topics (they wait for topic drills) and no PDF."""
+# How a passage type reads in a sentence ("a poem", "2 poetry sets").
+ELA_TYPE_WORDS = {"literary": "literary text", "poem": "poetry", "informational": "informational text"}
+ELA_TYPE_EXAMPLES = {"literary": "Give me a fiction passage", "poem": "Give me a poem",
+                     "informational": "Give me an informational passage"}
+
+
+def ela_response(sess_id, user_query, intent, topic, qtype, limit, reply):
+    """Every ELA request. ELA is served only as whole passage sets, never as
+    single questions, and has no PDF. A topic is a passage type."""
     if not config.ELA_ENABLED:
         return jsonify({"response": ELA_UNAVAILABLE})
 
+    kind = ELA_TOPICS.get(topic)
     sets, total = db.count_ela()
     if intent in ("list_topics", "count_questions"):
         if not sets:
             return jsonify({"response": "No English Language Arts passages are ready yet."})
+        by_kind = db.count_ela_by_kind()
+        items = "".join(
+            f"<li>{escape(name)}: <b>{by_kind.get(k, 0)}</b> sets, like “{ELA_TYPE_EXAMPLES[k]}”</li>"
+            for name, k in ELA_TOPICS.items())
         return jsonify({"response": (
             f"English Language Arts practice comes as whole passage sets: a passage and every "
             f"question about it, as on Part 1 of the exam. There are <b>{sets}</b> passage sets "
-            f"with <b>{total}</b> questions. Ask for “an ELA passage” to start one.")})
+            f"with <b>{total}</b> questions, in three types:<ul style='margin-top:0.5rem'>{items}</ul>"
+            f"Or ask for “an ELA passage” for any type.")})
 
     if qtype and qtype != "MCQ":
         return jsonify({"response": (
@@ -177,8 +191,11 @@ def ela_response(sess_id, user_query, intent, qtype, limit, reply):
             "choice. Ask for “an ELA passage” to get a set.")})
 
     # The parser counts about 10 questions per passage ("2 passages" -> 20).
-    stimuli, questions = db.fetch_ela_sets(max(1, round(limit / 10)), MAX_QUIZ_QUESTIONS, sess_id)
+    stimuli, questions = db.fetch_ela_sets(max(1, round(limit / 10)), MAX_QUIZ_QUESTIONS, sess_id, kind)
     if not questions:
+        if kind:
+            return jsonify({"response": f"No {ELA_TYPE_WORDS[kind]} passages are ready yet. "
+                                        f"Ask for “an ELA passage” for any type."})
         return jsonify({"response": "No English Language Arts passages are ready yet."})
 
     def describe(s):
@@ -291,8 +308,11 @@ def query():
     if intent == "chitchat":
         return jsonify({"response": escape(reply) if reply else help_response().get_json()["response"]})
 
+    # "Give me a poem" names an ELA passage type without saying ELA.
+    if not subject and topic in ELA_TOPICS:
+        subject = db.ELA_SUBJECT
     if subject == db.ELA_SUBJECT:
-        return ela_response(sess_id, user_query, intent, qtype, limit, reply)
+        return ela_response(sess_id, user_query, intent, topic, qtype, limit, reply)
 
     if intent == "list_topics":
         if not subject:

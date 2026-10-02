@@ -338,13 +338,14 @@ def _fetch_stimuli(cur, ids):
     return [found[i] for i in ids if i in found]
 
 
-def fetch_ela_sets(max_sets, max_questions, sess_id=None):
+def fetch_ela_sets(max_sets, max_questions, sess_id=None, kind=None):
     """Whole passage sets: a passage and every question about it.
 
     Sets this session hasn't seen come first, then repeats, each group in
     random order. Up to `max_sets` sets are added while the question total
     stays within `max_questions`, but at least one set is always returned:
-    a set is never cut in half to fit.
+    a set is never cut in half to fit. `kind` ('literary', 'poem',
+    'informational') limits it to one passage type.
 
     Returns (stimuli, questions); questions are grouped by passage and in
     printed order within it."""
@@ -362,9 +363,10 @@ def fetch_ela_sets(max_sets, max_questions, sess_id=None):
       JOIN question_stimuli qs ON qs.stimulus_id = s.id
       JOIN questions q ON q.id = qs.question_id
       WHERE q.subject = ? AND {_servable_stimulus("s")} AND {_servable_question("q")}
+        AND (? IS NULL OR s.kind = ?)
       GROUP BY s.id
       ORDER BY seen, RANDOM()
-    """, (sess_id or "", ELA_SUBJECT))
+    """, (sess_id or "", ELA_SUBJECT, kind, kind))
     picked, total = [], 0
     for r in cur.fetchall():
         if picked and total + r["n"] > max_questions:
@@ -392,6 +394,23 @@ def fetch_ela_sets(max_sets, max_questions, sess_id=None):
     stimuli = _fetch_stimuli(cur, picked)
     conn.close()
     return stimuli, questions
+
+
+def count_ela_by_kind():
+    """{kind: number of servable passage sets}."""
+    if not config.ELA_ENABLED:
+        return {}
+    conn = get_conn()
+    rows = conn.execute(f"""
+      SELECT s.kind, COUNT(DISTINCT s.id)
+      FROM stimuli s
+      JOIN question_stimuli qs ON qs.stimulus_id = s.id
+      JOIN questions q ON q.id = qs.question_id
+      WHERE q.subject = ? AND {_servable_stimulus("s")} AND {_servable_question("q")}
+      GROUP BY s.kind
+    """, (ELA_SUBJECT,)).fetchall()
+    conn.close()
+    return dict(rows)
 
 
 def count_ela():
