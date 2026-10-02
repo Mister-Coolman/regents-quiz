@@ -293,3 +293,35 @@ def test_extractor_bundle_is_translated(tmp_path):
     assert warnings == []
     assert bundle["questions"][0]["line_refs"] == [[3, 3], [4, 4], [5, 5]]
     assert ela_import.from_extractor(ours) is ours
+
+
+def test_footnote_markers_reach_the_reader_without_unverifying(synth_client, ela_parsed, ela_on, synth_db, tmp_path):
+    bundle_dir = str(tmp_path / "marks")
+    bundle = ela_bundle(bundle_dir)
+    a = bundle["stimuli"][0]
+    a["intro"] = "In this excerpt, a story begins."
+    a["intro_notes"] = [{"n": 1, "at": 15}]
+    a["title_notes"] = [{"n": 2, "at": 9}]
+    a["lines"][2]["notes"] = [{"n": 3, "at": 4}]
+    conn = sqlite3.connect(synth_db)
+    summary = ela_import.import_bundle(conn, bundle, bundle_dir, static_dir=str(tmp_path / "static"))
+    conn.commit()
+    conn.close()
+    assert summary.get("stimuli_changed", 0) == 1      # the intro is new text: A needs a fresh check
+    conn = sqlite3.connect(synth_db)
+    conn.execute("UPDATE stimuli SET verified_by = 'test', verified_at = CURRENT_TIMESTAMP")
+    conn.commit()
+    a["lines"][2]["notes"] = [{"n": 3, "at": 6}]       # a marker moves; the text doesn't
+    summary = ela_import.import_bundle(conn, bundle, bundle_dir, static_dir=str(tmp_path / "static"))
+    conn.commit()
+    assert summary.get("stimuli_marks_updated") == 1 and not summary.get("stimuli_changed")
+    assert conn.execute("SELECT COUNT(*) FROM stimuli WHERE verified_at IS NULL").fetchone()[0] == 0
+    conn.close()
+
+    for _ in range(2):
+        body = ask(synth_client)
+        stim = body["stimuli"][0]
+        if stim["label"] == "A":
+            break
+    assert stim["intro_notes"] == [{"n": 1, "at": 15}] and stim["title_notes"] == [{"n": 2, "at": 9}]
+    assert stim["lines"][2]["notes"] == [{"n": 3, "at": 6}]

@@ -168,11 +168,22 @@ def page_lines(page, pno):
 # ---------------------------------------------------------------- passages
 
 def join_title(lines):
-    out = ""
+    return join_with_notes(lines)[0]
+
+
+def join_with_notes(lines):
+    """Printed lines joined into one string, and their footnote markers with
+    offsets into that string."""
+    out, notes = "", []
     for l in lines:
+        lead = len(l.text) - len(l.text.lstrip())
         t = l.text.strip()
-        out += t if (not out or out.endswith("—") or t.startswith("—")) else " " + t
-    return out
+        if out and not (out.endswith("—") or t.startswith("—")):
+            out += " "
+        base = len(out)
+        notes += [{"n": n["n"], "at": max(0, min(len(t), n["at"] - lead)) + base} for n in l.notes]
+        out += t
+    return out, notes
 
 
 def parse_footnotes(lines):
@@ -258,15 +269,16 @@ def build_stimulus(p):
         if len(trial_mm) < len(mismatches):
             intro, lines, mismatches = body[:lead], trial, trial_mm
     title_line = p["heading"]
-    title_notes = [n for l in title_line for n in l.notes]
+    title, title_notes = join_with_notes(title_line)
+    intro_text, intro_notes = join_with_notes(intro)
     kind = {"A": "literary", "B": "poem", "C": "informational"}.get(p["label"], "unknown")
     return {
         "label": p["label"],
         "kind": kind,
-        "title": join_title(title_line),
+        "title": title,
         "title_notes": title_notes,
-        "intro": join_title(intro) or None,
-        "intro_notes": [n for l in intro for n in l.notes],
+        "intro": intro_text or None,
+        "intro_notes": intro_notes,
         "lines": lines,
         "line_count": len(lines),
         "printed_numbers": [int(n.text) for n in p["numbers"]],
@@ -544,6 +556,15 @@ def spans_with_italic(text, italic):
     return out
 
 
+def with_marks(text, notes, e):
+    """Escaped text with footnote markers as superscripts at their offsets."""
+    out, last = [], 0
+    for n in sorted(notes, key=lambda n: n["at"]):
+        out.append(e(text[last:n["at"]]) + f"<sup>{n['n']}</sup>")
+        last = n["at"]
+    return "".join(out) + e(text[last:])
+
+
 def review_html(meta, stimuli, questions, page_pngs, errors, warnings):
     e = html.escape
     out = [f"""<!doctype html><meta charset="utf-8"><title>ELA review: {e(meta['month'])} {meta['year']}</title>
@@ -596,9 +617,8 @@ breaks), then each question crop against its parsed stem, key and cited lines.</
             for a in s["attribution"])
         imgs = "".join(f"<img src='{e(page_pngs[p])}' alt='page {p + 1}'>" for p in s["pages"])
         # Shown above the passage in italics, unnumbered, as the reader shows it.
-        intro = (f"<p class=intro><span class=meta>Introduction (not numbered)</span><br><i>{e(s['intro'])}</i>"
-                 + "".join(f"<sup>{n['n']}</sup>" for n in s.get("intro_notes", [])) + "</p>") if s.get("intro") else ""
-        out.append(f"""<section><h2>Passage {e(s['label'])} ({e(s['kind'])}): {e(s['title'])}</h2>
+        intro = f"<p class=intro><i>{with_marks(s['intro'], s.get('intro_notes', []), e)}</i></p>" if s.get("intro") else ""
+        out.append(f"""<section><h2>Passage {e(s['label'])} ({e(s['kind'])}): {with_marks(s['title'], s['title_notes'], e)}</h2>
 <p class=meta>{s['line_count']} lines; printed numbers {s['printed_numbers']}; pages {[p + 1 for p in s['pages']]}</p>
 <div class=pair><div class=text>{intro}{''.join(rows)}<p style="text-align:right">{attr}</p>{notes}</div><div class=pages>{imgs}</div></div></section>""")
     out.append("<section><h2>Questions</h2>")

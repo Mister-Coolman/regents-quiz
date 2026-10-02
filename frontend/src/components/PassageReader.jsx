@@ -1,4 +1,5 @@
 import React, { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import FootnoteText from './FootnoteText';
 import { rangeKey, rangeLabel, refsFor, segment } from './lines';
 import styles from '../styles/Passage.module.css';
 
@@ -58,7 +59,9 @@ export function Line({ line, showNumber = true }) {
       <span className={styles.num} data-fifth={fifth ? 'true' : undefined} aria-hidden="true">
         {showNumber ? line.n : ''}
       </span>
-      <span className={styles.text} data-line-text>{line.text}</span>
+      <span className={styles.text} data-line-text>
+        <FootnoteText text={line.text} notes={line.notes} />
+      </span>
     </div>
   );
 }
@@ -71,10 +74,18 @@ function Passage({ stimulus, refs, rangeRefs, questionNumber, onBackToQuestion }
     <article className={styles.passage} aria-labelledby={headingId}>
       <header className={styles.passageHeader}>
         <p className={styles.passageLabel}>Passage {stimulus.label}</p>
-        <h3 id={headingId} className={styles.title}>{stimulus.title || `Passage ${stimulus.label}`}</h3>
+        <h3 id={headingId} className={styles.title}>
+          {stimulus.title
+            ? <FootnoteText text={stimulus.title} notes={stimulus.title_notes} />
+            : `Passage ${stimulus.label}`}
+        </h3>
         {stimulus.author && <p className={styles.author}>by {stimulus.author}</p>}
       </header>
-      {stimulus.intro && <p className={styles.intro}>{stimulus.intro}</p>}
+      {stimulus.intro && (
+        <p className={styles.intro}>
+          <FootnoteText text={stimulus.intro} notes={stimulus.intro_notes} />
+        </p>
+      )}
 
       <div className={styles.lines} ref={linesRef} style={{ fontSize, '--fs': `${fontSize}px` }}>
         {segment(stimulus.lines, refs).map((seg, i) => {
@@ -104,9 +115,17 @@ function Passage({ stimulus, refs, rangeRefs, questionNumber, onBackToQuestion }
       </div>
 
       {stimulus.footnotes?.length > 0 && (
-        <ol className={styles.footnotes} aria-label="Footnotes">
-          {stimulus.footnotes.map((f, i) => <li key={i}>{f}</li>)}
-        </ol>
+        <ul className={styles.footnotes} aria-label="Footnotes">
+          {stimulus.footnotes.map((f, i) => {
+            // Stored as printed: "2 transient: passing or temporary".
+            const m = f.match(/^(\d+)\s+([\s\S]*)$/);
+            return (
+              <li key={i}>
+                {m ? <><sup className={styles.mark}><span className="sr-only">footnote </span>{m[1]}</sup>{m[2]}</> : f}
+              </li>
+            );
+          })}
+        </ul>
       )}
       {stimulus.credit && <p className={styles.credit}>{stimulus.credit}</p>}
     </article>

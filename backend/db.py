@@ -14,7 +14,7 @@ def get_conn():
 
 # The schema version this code expects (PRAGMA user_version). Migrations run
 # offline with `python migrate.py`; see that file for why.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class SchemaTooOld(RuntimeError):
@@ -320,17 +320,20 @@ def _fetch_stimuli(cur, ids):
     ph = ",".join("?" * len(ids))
     cur.execute(f"""
       SELECT s.id, s.label, s.kind, s.title, s.author, s.intro, s.lines, s.footnotes, s.credit,
-             e.month, e.year
+             e.month, e.year, s.marks
       FROM stimuli s JOIN exams e ON e.id = s.exam_id
       WHERE s.id IN ({ph}) AND {_servable_stimulus("s")}
     """, list(ids))
     found = {}
     for r in cur.fetchall():
-        sid, label, kind, title, author, intro, lines, footnotes, credit, month, year = r
+        sid, label, kind, title, author, intro, lines, footnotes, credit, month, year, marks = r
+        marks = json.loads(marks or "{}")
         found[sid] = {
             "id": sid, "label": label, "kind": kind, "title": title, "author": author,
             "intro": intro, "lines": json.loads(lines), "footnotes": json.loads(footnotes or "[]"),
             "credit": credit, "month": month, "year": year,
+            # Footnote markers in the title and intro; line markers are in lines[].notes.
+            "title_notes": marks.get("title", []), "intro_notes": marks.get("intro", []),
         }
     return [found[i] for i in ids if i in found]
 
