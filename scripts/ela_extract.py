@@ -478,27 +478,56 @@ def question_blocks(doc, passage, first_no):
     return blocks
 
 
+EMBEDDED_CHOICE_RE = re.compile(r"\s+(?=\([1-4]\)\s)")
+
+
+def split_choice_row(line, text):
+    """A row of side-by-side choices ("(3) the cost  (4) the risk") can come
+    out of the PDF as one line. Split it at each inner "(n)", giving every
+    piece an x estimated from where it falls in the line."""
+    parts = EMBEDDED_CHOICE_RE.split(text)
+    if len(parts) == 1:
+        return [(line.x0, text)]
+    out, pos = [], 0
+    width = max(1.0, line.x1 - line.x0)
+    for part in parts:
+        at = text.index(part, pos)
+        # A little to the left of the estimate, so a wrapped line under this
+        # choice (which starts at its true x) still counts as right of it.
+        out.append((line.x0 + width * at / max(1, len(text)) - (10 if at else 0), part))
+        pos = at + len(part)
+    return out
+
+
+def choices_started(pieces):
+    return any(CHOICE_RE.match(t) for _, t in pieces)
+
+
 def parse_question(block):
     """Stem and choices from the lines, in reading order. Choices may sit in
     two sub-columns ((1)(3) / (2)(4)) and wrap onto indented lines."""
     stem, choices, anchors = [], {}, {}
+    pieces = []
     for i, l in enumerate(block["lines"]):     # already in reading order
         t = l.text.strip()
         if i == 0:
             t = re.sub(r"^\d{1,2}\s+", "", t)   # the question number
+        pieces.extend(split_choice_row(l, t) if (CHOICE_RE.match(t) or choices_started(pieces)) else [(l.x0, t)])
+    for x0, t in pieces:
         m = CHOICE_RE.match(t)
         if m:
             k = int(m.group(1))
             choices[k] = t[m.end():].strip()
-            anchors[k] = l.x0
+            anchors[k] = x0
         elif choices:
             # Continuation of the nearest choice to its left. When choices share
             # an x (one choice per row), that's the latest one above: a
             # wrapped "(4) concern over the coyote's declining / population"
             # belongs to (4), not (1). anchors keeps the order choices appeared.
-            left_of = [k for k in anchors if anchors[k] <= l.x0]
+            left_of = [k for k in anchors if anchors[k] <= x0]
             nearest = max((anchors[k] for k in left_of), default=None)
-            k = [k for k in left_of if anchors[k] == nearest][-1] if left_of else None
+            # Within 25pt counts as the same column: x for split rows is an estimate.
+            k = [k for k in left_of if anchors[k] >= nearest - 25][-1] if left_of else None
             if k is not None:
                 choices[k] = (choices[k] + " " + t).strip()
         else:
