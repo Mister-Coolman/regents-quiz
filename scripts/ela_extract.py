@@ -339,15 +339,23 @@ def question_blocks(doc, passage, first_no):
         return 0 if l.page in full_width or l.x0 < COLUMN_SPLIT else 1
 
     ordered = sorted(lines, key=lambda l: (l.page, col(l), round(l.y0), l.x0))
+    # The left edge of each column, from lines that start with a number only:
+    # a caption or figure further left mustn't move it.
     left = {}
     for l in ordered:
-        key = (l.page, col(l))
-        left[key] = min(left.get(key, 1e9), l.x0)
+        if NUM_RE.match(l.text):
+            key = (l.page, col(l))
+            left[key] = min(left.get(key, 1e9), l.x0)
+
+    def at_question_x(l):
+        c = col(l)
+        known = abs(l.x0 - QUESTION_NO_X[c if c in (0, 1) else 0]) < 3   # the June 2026 layout
+        return known or l.x0 - left.get((l.page, c), l.x0) < 15
 
     starts, expect = [], first_no
     for i, l in enumerate(ordered):
         m = NUM_RE.match(l.text)
-        if m and int(m.group(1)) == expect and l.x0 - left[(l.page, col(l))] < 15:
+        if m and int(m.group(1)) == expect and at_question_x(l):
             starts.append(i)
             expect += 1
 
