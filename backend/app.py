@@ -199,7 +199,10 @@ def ela_response(sess_id, user_query, intent, topic, qtype, limit, reply):
         return jsonify({"response": "No English Language Arts passages are ready yet."})
 
     def describe(s):
-        title = f"“{escape(s['title'])}”" if s.get("title") else f"Passage {escape(s['label'])}"
+        # Some titles are printed in quotation marks (“Bats and Swallows”);
+        # drop those so the reply's own quotes don't double up.
+        bare = (s.get("title") or "").strip().strip('"“”\'‘’').strip()
+        title = f"“{escape(bare)}”" if bare else f"Passage {escape(s['label'])}"
         by = f" by {escape(s['author'])}" if s.get("author") else ""
         return f"{title}{by}, from the {escape(s['month'])} {s['year']} exam"
 
