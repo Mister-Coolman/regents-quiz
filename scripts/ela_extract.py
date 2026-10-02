@@ -563,6 +563,7 @@ section {{ background: #fff; border-radius: 12px; padding: 20px; margin: 0 0 20p
 sup {{ color: #0066CC; }} .q img {{ max-width: 100%; border: 1px solid #ddd; }}
 .q {{ border-top: 1px solid #ddd; padding: 14px 0; }} .meta {{ color: #5E5E63; font-size: 13px; }}
 .err {{ color: #C8281E; }} .warn {{ color: #8a5a00; }}
+.intro {{ font-family: Georgia, serif; font-size: 13px; line-height: 1.6; margin: 0 0 12px 3em; max-width: 60ch; }}
 </style>
 <h1>{e(meta['month'])} {meta['year']} ELA Part 1: extraction review</h1>
 <p>Check each passage against its page images line by line (text, line numbers, italics, footnotes,
@@ -594,9 +595,12 @@ breaks), then each question crop against its parsed stem, key and cited lines.</
                     for x, y, k in spans_with_italic(a["text"], a["italic"]))
             for a in s["attribution"])
         imgs = "".join(f"<img src='{e(page_pngs[p])}' alt='page {p + 1}'>" for p in s["pages"])
+        # Shown above the passage in italics, unnumbered, as the reader shows it.
+        intro = (f"<p class=intro><span class=meta>Introduction (not numbered)</span><br><i>{e(s['intro'])}</i>"
+                 + "".join(f"<sup>{n['n']}</sup>" for n in s.get("intro_notes", [])) + "</p>") if s.get("intro") else ""
         out.append(f"""<section><h2>Passage {e(s['label'])} ({e(s['kind'])}): {e(s['title'])}</h2>
 <p class=meta>{s['line_count']} lines; printed numbers {s['printed_numbers']}; pages {[p + 1 for p in s['pages']]}</p>
-<div class=pair><div class=text>{''.join(rows)}<p style="text-align:right">{attr}</p>{notes}</div><div class=pages>{imgs}</div></div></section>""")
+<div class=pair><div class=text>{intro}{''.join(rows)}<p style="text-align:right">{attr}</p>{notes}</div><div class=pages>{imgs}</div></div></section>""")
     out.append("<section><h2>Questions</h2>")
     for q in questions:
         refs = ", ".join(f"{r['start']}-{r['end']} ({e(r['source'])})" for r in q["line_refs"]) or "none"
