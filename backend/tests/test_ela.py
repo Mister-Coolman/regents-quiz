@@ -349,3 +349,14 @@ def test_passage_type_filter(synth_client, parsed, ela_on):
     parsed(intent="list_topics", subject="ELA", topic="", qtype="", limit=0)
     listing = ask(synth_client, text="what ELA practice")["response"]
     assert "Poetry: <b>1</b>" in listing and "Literary text: <b>1</b>" in listing
+
+
+def test_quoted_title_is_not_double_quoted(synth_client, ela_parsed, ela_on, synth_db):
+    conn = sqlite3.connect(synth_db)
+    conn.execute("UPDATE stimuli SET title = '“The Poem”' WHERE label = 'B'")
+    conn.execute("UPDATE stimuli SET title = '\"The Story\"' WHERE label = 'A'")
+    conn.commit()
+    conn.close()
+    replies = [ask(synth_client)["response"] for _ in range(2)]
+    assert any("“The Poem”" in r for r in replies) and any("“The Story”" in r for r in replies)
+    assert not any("““" in r or "””" in r or '“&quot;' in r for r in replies)
