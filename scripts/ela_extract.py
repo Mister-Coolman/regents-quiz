@@ -398,8 +398,13 @@ def parse_question(block):
             choices[k] = t[m.end():].strip()
             anchors[k] = l.x0
         elif choices:
-            # Continuation of the nearest choice to its left in this row band.
-            k = max((k for k in anchors if anchors[k] <= l.x0), key=lambda k: anchors[k], default=None)
+            # Continuation of the nearest choice to its left. When choices share
+            # an x (one choice per row), that's the latest one above: a
+            # wrapped "(4) concern over the coyote's declining / population"
+            # belongs to (4), not (1). anchors keeps the order choices appeared.
+            left_of = [k for k in anchors if anchors[k] <= l.x0]
+            nearest = max((anchors[k] for k in left_of), default=None)
+            k = [k for k in left_of if anchors[k] == nearest][-1] if left_of else None
             if k is not None:
                 choices[k] = (choices[k] + " " + t).strip()
         else:
