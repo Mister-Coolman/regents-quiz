@@ -77,6 +77,15 @@ machines or workers without moving them to shared storage.
 ELA ships dark: the code, the passages and the frontend can all be live with
 `ELA_ENABLED` off, and nothing ELA is served or shown.
 
+### Adding many exams
+
+`python scripts/ela_batch.py` downloads, extracts and dry-runs every exam
+listed in `ela_extract.EXAMS` (all 34 Common Core and Next Generation
+administrations) that isn't imported yet, and prints a table: ready to
+review, extract failed, or import gates failed. Then take the ready ones
+through steps 2 to 6 below. A passage whose type was misread (literary, poem,
+informational) can be fixed in `scripts/ela_kinds.json`.
+
 ### Adding an exam
 
 All on the laptop, no code changes:

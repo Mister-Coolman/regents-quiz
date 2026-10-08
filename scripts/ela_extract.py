@@ -44,16 +44,25 @@ PDF_DIR = os.path.join(BASE_DIR, "pdfs", "ela")
 OUT_DIR = os.path.join(BASE_DIR, "ela_out")
 MAPS_PATH = os.path.join(BASE_DIR, "..", "docs", "ela", "research", "maps.json")
 
-# The 6 most recent administrations (owner decision, 2026-10-01).
-EXAMS = {
-    "125": {"month": "January", "year": 2025},
-    "625": {"month": "June", "year": 2025},
-    "825": {"month": "August", "year": 2025},
-    "126": {"month": "January", "year": 2026},
-    "626": {"month": "June", "year": 2026},
-    "826": {"month": "August", "year": 2026},
-}
 MONTH_NO = {"January": 1, "June": 6, "August": 8}
+
+# Every Regents Exam in ELA with today's Part 1 (3 passages, 24 multiple-
+# choice questions): the Common Core exam from June 2014, then the Next
+# Generation exam. The older Comprehensive English exam is a different test.
+# Administrations cancelled for COVID-19 are left out; if NYSED has no files
+# for a listed code, --download says so.
+CANCELLED = {("June", 2020), ("August", 2020), ("January", 2021), ("January", 2022)}
+EXAMS = {}
+for _year in range(2014, 2027):
+    for _month in ("January", "June", "August"):
+        if (_year, _month) == (2014, "January") or (_month, _year) in CANCELLED:
+            continue
+        EXAMS[f"{MONTH_NO[_month]}{_year % 100:02d}"] = {"month": _month, "year": _year}
+
+# Passage types where the usual order (A literary, B poem, C informational)
+# doesn't hold and detection gets it wrong. {"code": {"label": "kind"}}.
+# Kinds: literary, poem, informational. Check each exam's review page.
+KINDS_PATH = os.path.join(BASE_DIR, "ela_kinds.json")
 NYSED_BASE = "https://www.nysedregents.org/hsela"
 
 
@@ -64,12 +73,16 @@ def file_stems(meta):
 
 
 def exam_files(code):
-    """(exam PDF, scoring key) in pdfs/ela/<code>/, whatever they're named."""
+    """(exam PDF, scoring key) in pdfs/ela/<code>/, whatever they're named.
+    The key may be the Excel workbook or, for older exams, a PDF."""
     src = os.path.join(PDF_DIR, code)
-    pdfs = sorted(p for p in glob.glob(os.path.join(src, "*exam*.pdf")))
-    keys = sorted(glob.glob(os.path.join(src, "*sk*.xlsx")))
+    pdfs = sorted(glob.glob(os.path.join(src, "*exam*.pdf")))
+    if not pdfs:   # some years' exam file is just reela62015.pdf
+        pdfs = sorted(p for p in glob.glob(os.path.join(src, "*.pdf"))
+                      if not re.search(r"(sk|rg|rating|conv|key)[^/]*\.pdf$", p, re.I))
+    keys = sorted(glob.glob(os.path.join(src, "*sk*.xlsx"))) or sorted(glob.glob(os.path.join(src, "*sk*.pdf")))
     if not pdfs or not keys:
-        sys.exit(f"[ela] need the exam PDF (*exam*.pdf) and scoring key (*sk*.xlsx) in {src}; "
+        sys.exit(f"[ela] need the exam PDF and the scoring key (*sk*.xlsx or *sk*.pdf) in {src}; "
                  f"try --download, or save them from {NYSED_BASE}/")
     return pdfs[0], keys[0]
 
@@ -78,17 +91,23 @@ def download(code, meta):
     import requests
     src = os.path.join(PDF_DIR, code)
     os.makedirs(src, exist_ok=True)
-    for suffix in ("-exam.pdf", "-sk.xlsx"):
-        for stem in file_stems(meta):
-            url = f"{NYSED_BASE}/{code}/{stem}{suffix}"
-            resp = requests.get(url, timeout=60)
-            if resp.ok and len(resp.content) > 1000:
-                with open(os.path.join(src, stem + suffix), "wb") as f:
-                    f.write(resp.content)
-                print(f"[ela] downloaded {url}")
-                break
+    for what, suffixes in (("exam", ("-exam.pdf", ".pdf")), ("scoring key", ("-sk.xlsx", "-sk.pdf"))):
+        tried = []
+        for suffix in suffixes:
+            for stem in file_stems(meta):
+                url = f"{NYSED_BASE}/{code}/{stem}{suffix}"
+                tried.append(stem + suffix)
+                resp = requests.get(url, timeout=60)
+                if resp.ok and len(resp.content) > 1000 and not resp.content.lstrip().startswith(b"<"):
+                    with open(os.path.join(src, stem + suffix), "wb") as f:
+                        f.write(resp.content)
+                    print(f"[ela] downloaded {url}")
+                    break
+            else:
+                continue
+            break
         else:
-            print(f"[ela] couldn't find {suffix} for {code} (tried {', '.join(file_stems(meta))}); "
+            print(f"[ela] couldn't find the {what} for {code} (tried {', '.join(tried)}); "
                   f"save it by hand from {NYSED_BASE}/ into {src}")
 
 
@@ -96,6 +115,7 @@ def near(a, b, tol=0.6):
     """Font sizes differ by a few tenths between years and PDF exports."""
     return abs((a or 0) - b) <= tol
 
+TEXT_WIDTH = 612 - 2 * 72 # a letter page's text block, in points
 BODY_SIZE = 11.5          # passage and question text
 HEADING_SIZE = 14.0       # "Reading Comprehension Passage A" and titles
 FOOTNOTE_MAX_SIZE = 8.5   # glosses at the foot of the page
@@ -248,6 +268,41 @@ def extract_passages(doc, part1_pages):
     return passages
 
 
+def looks_like_poem(body, lines):
+    """Many lines end well short of the margin without a paragraph break
+    after them: verse, not prose."""
+    widths = sorted(b.x1 - b.x0 for b in body)
+    if len(widths) < 4:
+        return False
+    # Measured against the page's text width too: every line of a poem may
+    # be short, so its own longest lines are no guide.
+    full = max(widths[int(len(widths) * 0.9)], 0.85 * TEXT_WIDTH)
+    short = 0
+    for i, (b, ln) in enumerate(zip(body, lines)):
+        nxt = lines[i + 1] if i + 1 < len(lines) else None
+        paragraph_end = nxt is None or nxt.get("indent") or nxt.get("gap_before")
+        if (b.x1 - b.x0) < 0.75 * full and not paragraph_end:
+            short += 1
+    return short > 0.3 * len(body)
+
+
+DEFAULT_KINDS = {"A": "literary", "B": "poem", "C": "informational"}
+KIND_OVERRIDES = {}
+
+
+def passage_kind(label, body, lines):
+    """literary, poem or informational. An entry in ela_kinds.json wins;
+    otherwise verse is detected from the layout and prose falls back on the
+    usual order (A literary, C informational; a B that isn't verse, literary)."""
+    override = KIND_OVERRIDES.get(label)
+    if override:
+        return override
+    if looks_like_poem(body, lines):
+        return "poem"
+    default = DEFAULT_KINDS.get(label, "literary")
+    return "literary" if default == "poem" else default
+
+
 def fully_italic(l):
     """Every visible character of the line is italic."""
     covered = set()
@@ -282,7 +337,7 @@ def build_stimulus(p):
     title_line = p["heading"]
     title, title_notes = join_with_notes(title_line)
     intro_text, intro_notes = join_with_notes(intro)
-    kind = {"A": "literary", "B": "poem", "C": "informational"}.get(p["label"], "unknown")
+    kind = passage_kind(p["label"], body[skip:], lines)
     return {
         "label": p["label"],
         "kind": kind,
@@ -606,7 +661,28 @@ def unit_span(stimulus, unit, k):
 
 # ---------------------------------------------------------------- key, standards
 
-def read_key(xlsx_path):
+def read_key(path):
+    return read_key_pdf(path) if path.lower().endswith(".pdf") else read_key_xlsx(path)
+
+
+def read_key_pdf(pdf_path):
+    """{question number: answer} from a PDF scoring key, whose table rows
+    read like "June '15   7   3   MC   1   1"."""
+    doc = fitz.open(pdf_path)
+    text = "\n".join(page.get_text() for page in doc)
+    key = {}
+    for m in re.finditer(r"(?m)^\D*?\b(\d{1,2})\s+([1-4])\s+MC\b", text):
+        key.setdefault(int(m.group(1)), m.group(2))
+    if len(key) < 24:
+        # Some PDFs put each cell on its own line: number, answer, "MC".
+        cells = [t.strip() for t in text.split("\n") if t.strip()]
+        for i in range(len(cells) - 2):
+            if cells[i].isdigit() and cells[i + 1] in "1234" and cells[i + 2] == "MC":
+                key.setdefault(int(cells[i]), cells[i + 1])
+    return {n: k for n, k in key.items() if 1 <= n <= 24}
+
+
+def read_key_xlsx(xlsx_path):
     """{question number: answer} from the scoring-key workbook (column C is
     the question number, D the key), read without openpyxl."""
     z = zipfile.ZipFile(xlsx_path)
@@ -821,6 +897,8 @@ def main():
     if args.code not in EXAMS:
         sys.exit(f"[ela] unknown code {args.code}; add it to EXAMS (known: {', '.join(EXAMS)})")
     meta = EXAMS[args.code]
+    if os.path.exists(KINDS_PATH):
+        KIND_OVERRIDES.update(json.load(open(KINDS_PATH)).get(args.code, {}))
     if args.download:
         download(args.code, meta)
     exam_pdf, key_xlsx = exam_files(args.code)
@@ -891,6 +969,10 @@ def main():
             figures.append({"page": pno, "bbox": [round(v) for v in info["bbox"]], "passage": owner})
 
     errors, warnings = gate(stimuli, questions, mismatches, key)
+    for s in stimuli:
+        if s["kind"] != DEFAULT_KINDS.get(s["label"]) and s["label"] not in KIND_OVERRIDES:
+            warnings.append(f"passage {s['label']}: read as {s['kind']}, not the usual "
+                            f"{DEFAULT_KINDS.get(s['label'])}; check it, and set it in ela_kinds.json if wrong")
     for no in spilled:
         errors.append(f"Q{no}: continues into the next column or page; its crop would be incomplete")
     for f in figures:
