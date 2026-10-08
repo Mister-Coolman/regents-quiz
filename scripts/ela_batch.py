@@ -50,7 +50,9 @@ def main():
             rows.append((code, "unknown code", ""))
             continue
         meta = EXAMS[code]
-        have = glob.glob(os.path.join(PDF_DIR, code, "*.pdf"))
+        # --download fetches only what's missing (exam PDF or scoring key).
+        have = (glob.glob(os.path.join(PDF_DIR, code, "*.pdf"))
+                and glob.glob(os.path.join(PDF_DIR, code, "*sk*")))
         cmd = ["ela_extract.py", code] + ([] if have else ["--download"])
         print(f"[batch] {code} ({meta['month']} {meta['year']}) ...", flush=True)
         rc, log = run(cmd, SCRIPTS)

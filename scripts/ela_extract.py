@@ -58,6 +58,8 @@ for _year in range(2014, 2027):
         if (_year, _month) == (2014, "January") or (_month, _year) in CANCELLED:
             continue
         EXAMS[f"{MONTH_NO[_month]}{_year % 100:02d}"] = {"month": _month, "year": _year}
+# One-off file names NYSED used, e.g. https://www.nysedregents.org/hsela/621/reela-v202-exam.pdf
+EXAMS["621"]["stems"] = ["reela-v202"]
 
 # Passage types where the usual order (A literary, B poem, C informational)
 # doesn't hold and detection gets it wrong. {"code": {"label": "kind"}}.
@@ -67,9 +69,10 @@ NYSED_BASE = "https://www.nysedregents.org/hsela"
 
 
 def file_stems(meta):
-    """NYSED's file name stems for an administration, most likely first."""
+    """NYSED's file name stems for an administration, most likely first:
+    reela-62025 (2025 on), reela62023, and hsela62017 (2014 to 2017)."""
     mmyyyy = f"{MONTH_NO[meta['month']]}{meta['year']}"
-    return [f"reela-{mmyyyy}", f"reela{mmyyyy}"]
+    return meta.get("stems", []) + [f"reela-{mmyyyy}", f"reela{mmyyyy}", f"hsela{mmyyyy}", f"hsela-{mmyyyy}"]
 
 
 def exam_files(code):
@@ -80,7 +83,10 @@ def exam_files(code):
     if not pdfs:   # some years' exam file is just reela62015.pdf
         pdfs = sorted(p for p in glob.glob(os.path.join(src, "*.pdf"))
                       if not re.search(r"(sk|rg|rating|conv|key)[^/]*\.pdf$", p, re.I))
-    keys = sorted(glob.glob(os.path.join(src, "*sk*.xlsx"))) or sorted(glob.glob(os.path.join(src, "*sk*.pdf")))
+    # A revised key (-sk-rev) wins over the original if both are there.
+    by_rev = lambda p: (0 if "-rev" in os.path.basename(p) else 1, p)
+    keys = (sorted(glob.glob(os.path.join(src, "*sk*.xlsx")), key=by_rev)
+            or sorted(glob.glob(os.path.join(src, "*sk*.pdf")), key=by_rev))
     if not pdfs or not keys:
         sys.exit(f"[ela] need the exam PDF and the scoring key (*sk*.xlsx or *sk*.pdf) in {src}; "
                  f"try --download, or save them from {NYSED_BASE}/")
@@ -91,8 +97,13 @@ def download(code, meta):
     import requests
     src = os.path.join(PDF_DIR, code)
     os.makedirs(src, exist_ok=True)
-    for what, suffixes in (("exam", ("-exam.pdf", ".pdf")), ("scoring key", ("-sk.xlsx", "-sk.pdf"))):
+    # A revised key is published as -sk-rev (Aug 2023).
+    for what, suffixes in (("exam", ("-exam.pdf", ".pdf")),
+                           ("scoring key", ("-sk-rev.xlsx", "-sk.xlsx", "-sk-rev.pdf", "-sk.pdf"))):
         tried = []
+        pattern = "*exam*.pdf" if what == "exam" else "*sk*"
+        if glob.glob(os.path.join(src, pattern)):
+            continue      # already have it
         for suffix in suffixes:
             for stem in file_stems(meta):
                 url = f"{NYSED_BASE}/{code}/{stem}{suffix}"
